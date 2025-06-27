@@ -1,0 +1,40 @@
+# ==================== Python 3.10 Compatible requirements.txt ====================
+# Using pre-compiled binaries to avoid compilation errors
+
+# Core data processing (pre-compiled versions only)
+pandas>=2.0.0,<2.3.0
+numpy>=1.24.0,<2.0.0
+
+# Qt and Kiwoom API integration (Python 3.10 compatible)
+PyQt5>=5.15.0,<6.0.0
+
+# Web requests and async support
+requests>=2.31.0
+aiohttp>=3.8.0
+
+# Environment variables and system monitoring
+python-dotenv>=1.0.0
+psutil>=5.9.0
+
+# Windows specific (Kiwoom API required)
+pywin32>=306; sys_platform == "win32"
+
+# AI analysis
+openai>=1.0.0
+
+# Slack integration
+slack-sdk>=3.21.0
+
+# Logging and utilities
+colorlog>=6.7.0
+schedule>=1.2.0
+
+# Data validation
+pydantic>=2.0.0
+
+# Additional data processing (optional)
+matplotlib>=3.7.0
+openpyxl>=3.1.0
+
+# Financial data (optional)
+yfinance>=0.2.0
