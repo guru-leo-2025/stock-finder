@@ -264,8 +264,11 @@ class KiwoomTradingSystem:
                     price_data = self.kiwoom.get_stock_chart_data(stock_code, period="D", count=100)
                     
                     if not price_data.empty:
-                        # Perform comprehensive technical analysis
-                        analysis = self.technical.analyze_stock(stock_code, price_data)
+                        # Get stock name from stock_data
+                        stock_name = stock_data.get(stock_code, {}).get('name', stock_code)
+                        
+                        # Perform comprehensive technical analysis with stock name
+                        analysis = self.technical.analyze_stock(stock_code, price_data, stock_name)
                         technical_analysis_data[stock_code] = analysis
                         
                         # Enrich stock data with technical indicators and real data

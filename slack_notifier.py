@@ -379,7 +379,7 @@ class SlackBlockBuilder:
             
             # Enhanced stock information with comprehensive analysis
             rank_emoji = ["🥇", "🥈", "🥉"][i] if i < 3 else f"🔹"
-            company_name = stock.get('stock_name', stock.get('company_name', stock.get('stock_code', '')))
+            company_name = stock.get('stock_name', stock.get('name', stock.get('company_name', stock.get('stock_code', ''))))
             stock_code = stock.get('stock_code', '')
             
             # Core market data
@@ -1046,61 +1046,84 @@ class SlackNotifier:
             
             stock_name = analysis.get('stock_name', stock_code)
             technical_score = analysis.get('technical_score', 50)
-            final_recommendation = analysis.get('final_recommendation', analysis.get('recommendation', 'HOLD'))
+            recommendation = analysis.get('final_recommendation', analysis.get('recommendation', 'HOLD'))
             
-            # AI 분석 정보 추출
-            ai_analysis = analysis.get('ai_analysis', {})
-            ai_recommendation = ai_analysis.get('ai_recommendation', 'HOLD')
-            ai_confidence = ai_analysis.get('ai_confidence', 0.0)
-            ai_reasoning = ai_analysis.get('ai_reasoning', 'AI 분석 정보 없음')
+            # 기본 정보 추출
+            market_data = analysis.get('market_data', {})
+            current_price = market_data.get('current_price', 0)
+            change_rate = analysis.get('change_rate', 0)
+            volume = analysis.get('volume', market_data.get('volume', 0))
             
-            # 분석 요약 정보
-            analysis_summary = analysis.get('analysis_summary', {})
-            target_price = analysis_summary.get('target_price_range', {})
-            key_factors = analysis_summary.get('key_factors', [])
+            # RSI 정보
+            indicators = analysis.get('indicators', {})
+            rsi = indicators.get('rsi', 'N/A')
+            rsi_status = "과매수" if isinstance(rsi, (int, float)) and rsi > 70 else "과매도" if isinstance(rsi, (int, float)) and rsi < 30 else "적정"
+            
+            # 세부 점수 정보
+            detailed_scores = analysis.get('detailed_scores', {})
+            trend_score = detailed_scores.get('trend_score', 0)
+            rsi_score = detailed_scores.get('rsi_score', 0)
+            macd_score = detailed_scores.get('macd_score', 0)
             
             # 이모지 매핑
             rank_emoji = ["🥇", "🥈", "🥉"][i] if i < 3 else f"{i+1}️⃣"
             
             rec_emoji = {
                 'BUY': '🟢', 'SELL': '🔴', 'HOLD': '🟡',
-                '적극매수': '🟢🟢', '매수': '🟢', '보유': '🟡', '관망': '⚪'
-            }.get(final_recommendation, '🟡')
+                '적극매수': '🟢', '매수': '🟢', '보유': '🟡', '관망': '⚪'
+            }.get(recommendation, '🟡')
             
-            confidence_emoji = "🔥" if ai_confidence > 0.8 else "⭐" if ai_confidence > 0.6 else "💫"
+            # 간결한 스타일로 구성
+            stock_text = f"{rank_emoji} {stock_name} ({stock_code}) {rec_emoji}\n"
             
-            # 주가 정보
-            market_data = analysis.get('market_data', {})
-            current_price = market_data.get('current_price', 0)
-            
-            # 블록 텍스트 구성
-            stock_text = f"{rank_emoji} **{stock_name}** ({stock_code})\n"
-            if current_price > 0:
-                stock_text += f"💰 현재가: {current_price:,}원\n"
-            
-            stock_text += f"📊 기술적 점수: {technical_score:.0f}점\n"
-            stock_text += f"{rec_emoji} **최종 추천**: {final_recommendation}\n"
-            stock_text += f"{confidence_emoji} **AI 신뢰도**: {ai_confidence:.1f} ({ai_recommendation})\n"
-            
-            # 목표 주가 정보 (있는 경우)
-            if target_price and target_price.get('low') and target_price.get('high'):
-                stock_text += f"🎯 목표가: {target_price['low']:,}~{target_price['high']:,}원\n"
-            
-            # 핵심 요인들 (최대 3개)
-            if key_factors:
-                factors_text = ' | '.join(key_factors[:3])
-                stock_text += f"💡 핵심요인: {factors_text}\n"
-            
-            # AI 분석 요약 (문장별로 표시)
-            if ai_reasoning:
-                # AI 분석 내용을 문장으로 분리
-                sentences = self._format_ai_analysis_sentences(ai_reasoning)
-                if sentences:
-                    stock_text += f"🤖 **AI분석**:\n"
-                    for i, sentence in enumerate(sentences[:3], 1):  # 최대 3개 문장
-                        stock_text += f"• {sentence}\n"
+            # 현재가 정보
+            if isinstance(current_price, (int, float)) and current_price > 0:
+                if isinstance(change_rate, (int, float)) and change_rate != 0:
+                    change_sign = "+" if change_rate > 0 else ""
+                    stock_text += f"현재가: {current_price:,}원 ({change_sign}{change_rate:.2f}%)\n"
                 else:
-                    stock_text += f"🤖 AI분석: {ai_reasoning[:100]}{'...' if len(ai_reasoning) > 100 else ''}"
+                    stock_text += f"현재가: {current_price:,}원\n"
+            
+            # 거래량
+            if isinstance(volume, (int, float)) and volume > 0:
+                stock_text += f"거래량: {volume:,}주\n"
+            
+            # 기술적 점수와 추천
+            stock_text += f"기술적 점수: {technical_score:.0f}점 | 추천: {recommendation}\n"
+            
+            # RSI 정보
+            if isinstance(rsi, (int, float)):
+                stock_text += f"🔍 RSI: {rsi:.0f}({rsi_status})\n"
+            
+            # 세부 점수 (의미있는 것만)
+            score_parts = []
+            if abs(trend_score) >= 5:
+                trend_status = "상승" if trend_score > 0 else "하락"
+                score_parts.append(f"추세: {trend_score:+.0f}점({trend_status})")
+            if abs(rsi_score) >= 5:
+                rsi_trend = "상승" if rsi_score > 0 else "하락" if rsi_score < -5 else "보통"
+                score_parts.append(f"RSI: {rsi_score:+.0f}점({rsi_trend})")
+            if abs(macd_score) >= 5:
+                macd_trend = "상승" if macd_score > 0 else "하락" if macd_score < -5 else "보통"
+                score_parts.append(f"MACD: {macd_score:+.0f}점({macd_trend})")
+            
+            if score_parts:
+                stock_text += f"📊 {' | '.join(score_parts[:3])}\n"
+            
+            # AI 분석 (간결하게)
+            ai_analysis = analysis.get('ai_analysis', {})
+            if ai_analysis and ai_analysis.get('ai_reasoning'):
+                ai_reasoning = ai_analysis.get('ai_reasoning', '')
+                sentences = self._format_ai_analysis_sentences(ai_reasoning)
+                if sentences and len(sentences) > 0:
+                    # 첫 번째 문장만 표시
+                    first_sentence = sentences[0]
+                    if len(first_sentence) > 80:
+                        first_sentence = first_sentence[:80] + "..."
+                    stock_text += f"🤖 AI분석: {first_sentence}"
+                else:
+                    short_ai = ai_reasoning[:60] + "..." if len(ai_reasoning) > 60 else ai_reasoning
+                    stock_text += f"🤖 AI분석: {short_ai}"
             else:
                 stock_text += f"🤖 AI분석: 분석 정보 없음"
             
