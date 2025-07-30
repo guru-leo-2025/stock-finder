@@ -974,3 +974,182 @@ class SlackNotifier:
             blocks=blocks,
             fallback_text=message
         )
+    
+    def send_ai_enhanced_analysis(self, ai_analysis_results: Dict[str, Dict], condition_name: str = "AI 강화 분석") -> bool:
+        """AI가 강화된 기술적 분석 결과를 Slack으로 전송"""
+        try:
+            self.logger.info(f"📱 AI 강화 분석 결과 전송: {condition_name}")
+            
+            if not ai_analysis_results:
+                return self._send_no_data_message("AI 분석 결과가 없습니다.")
+            
+            # AI 분석 결과를 Slack 블록으로 변환
+            blocks = self._create_ai_enhanced_analysis_blocks(ai_analysis_results, condition_name)
+            
+            # 메시지 전송
+            return self.send_message_with_blocks(
+                blocks=blocks,
+                fallback_text=f"AI 강화 분석 결과 - {len(ai_analysis_results)}개 종목"
+            )
+            
+        except Exception as e:
+            self.logger.error(f"❌ AI 강화 분석 결과 전송 오류: {e}")
+            return False
+    
+    def _create_ai_enhanced_analysis_blocks(self, ai_results: Dict[str, Dict], condition_name: str) -> List[Dict]:
+        """AI 강화 분석 결과를 위한 Slack 블록 생성"""
+        blocks = []
+        
+        # 헤더
+        blocks.append(self.block_builder.create_header_block(f"🤖 {condition_name} - AI 강화 분석", "🧠"))
+        
+        # 요약 정보
+        total_stocks = len(ai_results)
+        ai_recommendations = {'BUY': 0, 'SELL': 0, 'HOLD': 0, '적극매수': 0, '관망': 0}
+        high_confidence_count = 0
+        
+        for stock_code, analysis in ai_results.items():
+            final_rec = analysis.get('final_recommendation', analysis.get('recommendation', 'HOLD'))
+            if final_rec in ai_recommendations:
+                ai_recommendations[final_rec] += 1
+            
+            ai_analysis = analysis.get('ai_analysis', {})
+            if ai_analysis.get('ai_confidence', 0) > 0.7:
+                high_confidence_count += 1
+        
+        summary_text = f"📊 **AI 분석 요약**:\n"
+        summary_text += f"• 총 분석 종목: {total_stocks}개\n"
+        summary_text += f"• 고신뢰도 분석: {high_confidence_count}개 (70% 이상)\n"
+        summary_text += f"• 적극매수: {ai_recommendations.get('적극매수', 0)}개\n"
+        summary_text += f"• 매수(BUY): {ai_recommendations.get('BUY', 0)}개\n"
+        summary_text += f"• 보유(HOLD): {ai_recommendations.get('HOLD', 0)}개\n"
+        summary_text += f"• 관망: {ai_recommendations.get('관망', 0)}개"
+        
+        blocks.append({
+            "type": "section",
+            "text": {
+                "type": "mrkdwn",
+                "text": summary_text
+            }
+        })
+        
+        blocks.append(self.block_builder.create_divider_block())
+        
+        # 개별 종목 분석 (상위 10개)
+        sorted_stocks = sorted(ai_results.items(), 
+                              key=lambda x: x[1].get('technical_score', 0), 
+                              reverse=True)
+        
+        for i, (stock_code, analysis) in enumerate(sorted_stocks[:10]):
+            if i > 0 and i % 3 == 0:
+                blocks.append(self.block_builder.create_divider_block())
+            
+            stock_name = analysis.get('stock_name', stock_code)
+            technical_score = analysis.get('technical_score', 50)
+            final_recommendation = analysis.get('final_recommendation', analysis.get('recommendation', 'HOLD'))
+            
+            # AI 분석 정보 추출
+            ai_analysis = analysis.get('ai_analysis', {})
+            ai_recommendation = ai_analysis.get('ai_recommendation', 'HOLD')
+            ai_confidence = ai_analysis.get('ai_confidence', 0.0)
+            ai_reasoning = ai_analysis.get('ai_reasoning', 'AI 분석 정보 없음')
+            
+            # 분석 요약 정보
+            analysis_summary = analysis.get('analysis_summary', {})
+            target_price = analysis_summary.get('target_price_range', {})
+            key_factors = analysis_summary.get('key_factors', [])
+            
+            # 이모지 매핑
+            rank_emoji = ["🥇", "🥈", "🥉"][i] if i < 3 else f"{i+1}️⃣"
+            
+            rec_emoji = {
+                'BUY': '🟢', 'SELL': '🔴', 'HOLD': '🟡',
+                '적극매수': '🟢🟢', '매수': '🟢', '보유': '🟡', '관망': '⚪'
+            }.get(final_recommendation, '🟡')
+            
+            confidence_emoji = "🔥" if ai_confidence > 0.8 else "⭐" if ai_confidence > 0.6 else "💫"
+            
+            # 주가 정보
+            market_data = analysis.get('market_data', {})
+            current_price = market_data.get('current_price', 0)
+            
+            # 블록 텍스트 구성
+            stock_text = f"{rank_emoji} **{stock_name}** ({stock_code})\n"
+            if current_price > 0:
+                stock_text += f"💰 현재가: {current_price:,}원\n"
+            
+            stock_text += f"📊 기술적 점수: {technical_score:.0f}점\n"
+            stock_text += f"{rec_emoji} **최종 추천**: {final_recommendation}\n"
+            stock_text += f"{confidence_emoji} **AI 신뢰도**: {ai_confidence:.1f} ({ai_recommendation})\n"
+            
+            # 목표 주가 정보 (있는 경우)
+            if target_price and target_price.get('low') and target_price.get('high'):
+                stock_text += f"🎯 목표가: {target_price['low']:,}~{target_price['high']:,}원\n"
+            
+            # 핵심 요인들 (최대 3개)
+            if key_factors:
+                factors_text = ' | '.join(key_factors[:3])
+                stock_text += f"💡 핵심요인: {factors_text}\n"
+            
+            # AI 분석 요약 (간단히)
+            if len(ai_reasoning) > 100:
+                ai_summary = ai_reasoning[:100] + "..."
+            else:
+                ai_summary = ai_reasoning
+            stock_text += f"🤖 AI분석: {ai_summary}"
+            
+            # 액션 버튼
+            action_buttons = [
+                {
+                    "text": "📈 차트보기",
+                    "action_id": "view_chart",
+                    "value": f"chart_{stock_code}",
+                    "url": f"https://www.tradingview.com/chart/?symbol=KRX:{stock_code}",
+                    "style": "primary"
+                },
+                {
+                    "text": "💹 네이버금융",
+                    "action_id": "view_naver",
+                    "value": f"naver_{stock_code}",
+                    "url": f"https://finance.naver.com/item/main.naver?code={stock_code}"
+                }
+            ]
+            
+            blocks.append({
+                "type": "section",
+                "text": {
+                    "type": "mrkdwn",
+                    "text": stock_text
+                }
+            })
+            
+            blocks.append(self.block_builder.create_action_buttons(action_buttons))
+        
+        # AI 분석 방법론 설명
+        blocks.append(self.block_builder.create_divider_block())
+        
+        methodology_text = "🧠 **AI 분석 방법론**:\n\n"
+        methodology_text += "• **기술적 분석 + AI 융합**: 전통적 기술적 지표를 AI가 해석\n"
+        methodology_text += "• **패턴 인식**: 차트 패턴과 시장 심리를 AI가 종합 분석\n"
+        methodology_text += "• **신뢰도 기반 추천**: AI 신뢰도에 따른 가중 추천\n"
+        methodology_text += "• **리스크 평가**: 변동성과 시장 상황을 고려한 위험도 평가\n"
+        methodology_text += "• **목표가 산정**: 지지/저항선 분석을 통한 합리적 목표가 제시"
+        
+        blocks.append({
+            "type": "section",
+            "text": {
+                "type": "mrkdwn",
+                "text": methodology_text
+            }
+        })
+        
+        # 푸터
+        blocks.append(self.block_builder.create_divider_block())
+        blocks.append(self.block_builder.create_context_block([
+            "🤖 OpenAI GPT-4 기반 AI 분석",
+            f"📊 기술적 분석: RSI, MACD, 이동평균선, 볼린저밴드 등",
+            f"🕐 분석시간: {datetime.now().strftime('%Y-%m-%d %H:%M')}",
+            "⚠️ 투자 판단의 참고자료로만 활용하세요"
+        ]))
+        
+        return blocks

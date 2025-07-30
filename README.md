@@ -61,7 +61,7 @@ SCREENING_CONDITION_NAME=10stars
 
 # OpenAI API
 OPENAI_API_KEY=your_openai_api_key
-OPENAI_MODEL=gpt-4
+OPENAI_MODEL=gpt-4o-mini-2024-07-18
 OPENAI_MAX_TOKENS=2000
 
 # Slack
@@ -104,9 +104,17 @@ analysis_result = await ai_analyzer.analyze_stock("005930")  # 삼성전자
 
 ### AI 분석 엔진
 - **다중 지표 분석**: RSI, MACD, 볼린저 밴드, 이동평균선 등
-- **시장 센티먼트 분석**: 뉴스 및 공시 데이터 기반 감정 분석
+- **AI 모델 선택**: 기본값 `gpt-4o-mini-2024-07-18` (비용 효율적)
 - **패턴 인식**: 차트 패턴 및 기술적 신호 자동 감지
 - **위험도 평가**: AI 기반 리스크 스코어링
+
+#### 📝 지원 OpenAI 모델
+- `gpt-4o-mini-2024-07-18` (기본값, 비용 효율적)
+- `gpt-4o` (고성능, 높은 비용)
+- `gpt-4-turbo` (균형잡힌 성능)
+- `gpt-4` (표준 GPT-4 모델)
+
+환경변수 `OPENAI_MODEL`로 변경 가능합니다.
 
 ### 실시간 모니터링
 - 실시간 주가 변동 추적

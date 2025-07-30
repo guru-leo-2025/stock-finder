@@ -44,8 +44,43 @@ class AIStockAnalyzer:
             self.logger.error(f"❌ OpenAI API connection test failed: {e}")
             raise
     
+    def analyze_stocks_with_technical_data(self, technical_analysis_results: Dict[str, Dict]) -> Dict[str, Dict]:
+        """Analyze stocks using technical analysis data and provide AI-enhanced recommendations"""
+        if not self.client:
+            self.logger.error("❌ OpenAI client not initialized")
+            return {}
+        
+        analysis_results = {}
+        
+        try:
+            self.logger.info(f"🤖 Starting AI analysis for {len(technical_analysis_results)} stocks with technical data")
+            
+            for stock_code, technical_data in technical_analysis_results.items():
+                stock_name = technical_data.get('stock_name', stock_code)
+                self.logger.info(f"🔍 AI analyzing stock: {stock_name} ({stock_code})")
+                
+                # Get AI analysis based on technical data
+                analysis = self._get_technical_ai_analysis(stock_code, technical_data)
+                
+                if analysis:
+                    # Combine technical analysis with AI insights
+                    combined_analysis = self._combine_technical_and_ai_analysis(technical_data, analysis)
+                    analysis_results[stock_code] = combined_analysis
+                    self.logger.info(f"✅ AI analysis completed for {stock_name}")
+                else:
+                    self.logger.warning(f"⚠️ AI analysis failed for {stock_name}")
+                    # Fall back to technical analysis only
+                    analysis_results[stock_code] = technical_data
+            
+            self.logger.info(f"🤖 AI analysis completed for {len(analysis_results)} stocks")
+            
+        except Exception as e:
+            self.logger.error(f"❌ Error in AI stock analysis: {e}")
+        
+        return analysis_results
+
     def analyze_stocks(self, stock_data: Dict[str, Dict], market_data: Dict[str, Dict] = None) -> Dict[str, Dict]:
-        """Analyze stocks and provide buy/sell recommendations"""
+        """Analyze stocks and provide buy/sell recommendations (original method maintained for compatibility)"""
         if not self.client:
             self.logger.error("❌ OpenAI client not initialized")
             return {}
@@ -293,6 +328,181 @@ JSON 형식으로 응답해 주세요.
             summary['average_confidence'] = total_confidence / len(stock_analyses)
         
         return summary
+    
+    def _get_technical_ai_analysis(self, stock_code: str, technical_data: Dict) -> Optional[Dict]:
+        """Get AI analysis based on technical analysis data"""
+        try:
+            # Create enhanced technical analysis prompt
+            prompt = self._create_technical_analysis_prompt(stock_code, technical_data)
+            
+            # Call OpenAI API with technical data context
+            response = self.client.chat.completions.create(
+                model=self.model,
+                messages=[
+                    {
+                        "role": "system",
+                        "content": self._get_technical_system_prompt()
+                    },
+                    {
+                        "role": "user",
+                        "content": prompt
+                    }
+                ],
+                max_tokens=self.max_tokens,
+                temperature=0.7,
+                response_format={"type": "json_object"}
+            )
+            
+            # Parse response
+            content = response.choices[0].message.content
+            analysis = json.loads(content)
+            
+            # Add metadata
+            analysis['ai_model'] = self.model
+            analysis['analysis_timestamp'] = datetime.now().isoformat()
+            analysis['tokens_used'] = response.usage.total_tokens
+            
+            return analysis
+            
+        except Exception as e:
+            self.logger.error(f"❌ Error getting technical AI analysis for {stock_code}: {e}")
+            return None
+    
+    def _get_technical_system_prompt(self) -> str:
+        """Get system prompt specifically for technical analysis enhancement"""
+        return """
+You are an expert Korean stock market technical analyst with deep knowledge of chart patterns, technical indicators, and market psychology.
+Your task is to enhance technical analysis results with AI insights and provide comprehensive investment recommendations.
+
+Guidelines:
+1. Analyze the provided technical indicators (RSI, MACD, Moving Averages, Bollinger Bands, etc.)
+2. Interpret chart patterns and market signals
+3. Consider volume analysis and momentum indicators
+4. Provide clear BUY, SELL, or HOLD recommendations with confidence levels
+5. Identify key support and resistance levels
+6. Assess short-term and medium-term price targets
+7. Highlight potential risks and opportunities
+8. Use Korean stock market context and terminology
+
+Response format must be JSON with these fields:
+{
+    "ai_recommendation": "BUY|SELL|HOLD",
+    "ai_confidence": 0.0-1.0,
+    "ai_reasoning": "detailed AI analysis explanation",
+    "target_price_range": {"low": number, "high": number},
+    "stop_loss_level": number or null,
+    "key_insights": ["insight1", "insight2", ...],
+    "risk_factors": ["risk1", "risk2", ...],
+    "catalysts": ["catalyst1", "catalyst2", ...],
+    "technical_summary": "brief technical pattern summary",
+    "market_context": "current market environment analysis",
+    "time_horizon": "SHORT|MEDIUM|LONG",
+    "volatility_assessment": "LOW|MEDIUM|HIGH"
+}
+"""
+    
+    def _create_technical_analysis_prompt(self, stock_code: str, technical_data: Dict) -> str:
+        """Create detailed prompt for technical analysis AI enhancement"""
+        stock_name = technical_data.get('stock_name', stock_code)
+        technical_score = technical_data.get('technical_score', 50)
+        recommendation = technical_data.get('recommendation', 'HOLD')
+        risk_level = technical_data.get('risk_level', '보통')
+        
+        # Extract technical indicators
+        indicators = technical_data.get('indicators', {})
+        buy_signals = technical_data.get('buy_signals', [])
+        detailed_scores = technical_data.get('detailed_scores', {})
+        technical_summary = technical_data.get('technical_summary', {})
+        market_data = technical_data.get('market_data', {})
+        
+        prompt = f"""
+종목 기술적 분석 AI 강화 요청:
+
+=== 기본 정보 ===
+- 종목명: {stock_name}
+- 종목코드: {stock_code}
+- 현재가: {market_data.get('current_price', 'N/A'):,}원
+- 거래량: {market_data.get('volume', 'N/A'):,}주
+- 52주 최고가: {market_data.get('high_52w', 'N/A'):,}원
+- 52주 최저가: {market_data.get('low_52w', 'N/A'):,}원
+
+=== 기술적 분석 결과 ===
+- 기술적 점수: {technical_score:.1f}점 (100점 만점)
+- 기본 추천: {recommendation}
+- 리스크 수준: {risk_level}
+
+=== 기술적 지표 ===
+- RSI: {indicators.get('rsi', 'N/A')}
+- MACD: {indicators.get('macd', 'N/A'):.4f} (신호선: {indicators.get('macd_signal', 'N/A'):.4f})
+- 5일 이평선: {indicators.get('sma_5', 'N/A'):,}원
+- 20일 이평선: {indicators.get('sma_20', 'N/A'):,}원
+- 현재 주가 위치: {indicators.get('current_price', 'N/A'):,}원
+- 스토캐스틱 %K: {indicators.get('stoch_k', 'N/A'):.1f}
+- 스토캐스틱 %D: {indicators.get('stoch_d', 'N/A'):.1f}
+
+위의 종합적인 기술적 분석 데이터를 바탕으로 AI 관점에서 투자 분석을 제공해 주세요.
+"""
+        
+        return prompt
+    
+    def _combine_technical_and_ai_analysis(self, technical_data: Dict, ai_analysis: Dict) -> Dict:
+        """Combine technical analysis results with AI insights"""
+        try:
+            # Start with technical analysis data
+            combined = technical_data.copy()
+            
+            # Add AI analysis results
+            combined['ai_analysis'] = ai_analysis
+            
+            # Create enhanced recommendation based on both analyses
+            technical_rec = technical_data.get('recommendation', 'HOLD')
+            ai_rec = ai_analysis.get('ai_recommendation', 'HOLD')
+            ai_confidence = ai_analysis.get('ai_confidence', 0.5)
+            
+            # Determine final recommendation
+            final_recommendation = self._determine_final_recommendation(
+                technical_rec, ai_rec, ai_confidence
+            )
+            
+            # Enhanced analysis summary
+            combined['final_recommendation'] = final_recommendation
+            combined['analysis_summary'] = {
+                'technical_recommendation': technical_rec,
+                'ai_recommendation': ai_rec,
+                'ai_confidence': ai_confidence,
+                'final_recommendation': final_recommendation,
+                'key_factors': ai_analysis.get('key_insights', []),
+                'risk_assessment': ai_analysis.get('risk_factors', []),
+                'target_price_range': ai_analysis.get('target_price_range', {}),
+                'time_horizon': ai_analysis.get('time_horizon', 'MEDIUM')
+            }
+            
+            return combined
+            
+        except Exception as e:
+            self.logger.error(f"❌ Error combining technical and AI analysis: {e}")
+            return technical_data
+    
+    def _determine_final_recommendation(self, technical_rec: str, ai_rec: str, ai_confidence: float) -> str:
+        """Determine final recommendation based on technical and AI analysis"""
+        try:
+            if ai_confidence < 0.3:
+                return technical_rec
+            elif ai_confidence > 0.8 and ai_rec == technical_rec:
+                if ai_rec == 'BUY':
+                    return '적극매수'
+                else:
+                    return technical_rec
+            elif ai_rec == technical_rec:
+                return technical_rec
+            else:
+                if ai_confidence > 0.7:
+                    return ai_rec
+                else:
+                    return '관망'
+        except Exception as e:
+            self.logger.error(f"❌ Error determining final recommendation: {e}")
+            return technical_rec
     
     def get_market_sentiment(self, market_indices: Dict = None) -> Dict[str, Any]:
         """Analyze overall market sentiment"""

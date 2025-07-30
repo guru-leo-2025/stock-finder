@@ -22,7 +22,7 @@ class KiwoomConfig:
 class OpenAIConfig:
     """OpenAI API configuration"""
     api_key: str = field(default_factory=lambda: os.getenv('OPENAI_API_KEY', ''))
-    model: str = field(default_factory=lambda: os.getenv('OPENAI_MODEL', 'gpt-4'))
+    model: str = field(default_factory=lambda: os.getenv('OPENAI_MODEL', 'gpt-4o-mini-2024-07-18'))
     max_tokens: int = field(default_factory=lambda: int(os.getenv('OPENAI_MAX_TOKENS', '2000')))
 
 @dataclass

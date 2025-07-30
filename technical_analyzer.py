@@ -20,16 +20,17 @@ class TechnicalAnalyzer:
     def __init__(self):
         self.logger = logging.getLogger(__name__)
         
-    def analyze_stock(self, stock_code: str, price_data: pd.DataFrame) -> Dict[str, Any]:
+    def analyze_stock(self, stock_code: str, price_data: pd.DataFrame, stock_name: str = None) -> Dict[str, Any]:
         """
-        Analyze single stock with technical indicators
+        Analyze single stock with technical indicators and prepare for AI analysis
         
         Args:
             stock_code: Stock code (e.g., '005930')
             price_data: DataFrame with columns ['date', 'open', 'high', 'low', 'close', 'volume']
+            stock_name: Optional stock name for better AI context
             
         Returns:
-            Dict containing technical analysis results
+            Dict containing technical analysis results ready for AI processing
         """
         try:
             if price_data.empty or len(price_data) < 20:
@@ -54,15 +55,29 @@ class TechnicalAnalyzer:
             # Get current values
             current_values = self._get_current_values(technical_indicators, price_data)
             
+            # Prepare technical summary for AI analysis
+            technical_summary = self._prepare_ai_analysis_data(
+                technical_indicators, buy_signals, detailed_scores, current_values, price_data
+            )
+            
             return {
                 "stock_code": stock_code,
+                "stock_name": stock_name or stock_code,
                 "technical_score": technical_score,
                 "detailed_scores": detailed_scores,
                 "buy_signals": buy_signals,
                 "risk_level": risk_level,
                 "indicators": current_values,
                 "recommendation": self._get_recommendation(technical_score, buy_signals, risk_level),
-                "analysis_time": datetime.now().isoformat()
+                "analysis_time": datetime.now().isoformat(),
+                "technical_summary": technical_summary,  # New field for AI analysis
+                "market_data": {
+                    "current_price": float(price_data['close'].iloc[-1]) if not price_data.empty else 0.0,
+                    "volume": int(price_data['volume'].iloc[-1]) if not price_data.empty else 0,
+                    "high_52w": float(price_data['high'].max()) if not price_data.empty else 0.0,
+                    "low_52w": float(price_data['low'].min()) if not price_data.empty else 0.0,
+                    "avg_volume_20d": float(price_data['volume'].tail(20).mean()) if len(price_data) >= 20 else 0.0
+                }
             }
             
         except Exception as e:
@@ -556,6 +571,130 @@ class TechnicalAnalyzer:
                 results[stock_code] = self._get_empty_analysis()
                 
         return results
+    
+    def _prepare_ai_analysis_data(self, indicators: Dict[str, np.ndarray], buy_signals: List[str], 
+                                detailed_scores: Dict[str, Any], current_values: Dict[str, float], 
+                                price_data: pd.DataFrame) -> Dict[str, Any]:
+        """Prepare technical analysis data for AI processing"""
+        try:
+            # Price trend analysis
+            price_trend = "상승" if len(indicators['close']) > 1 and indicators['close'][-1] > indicators['close'][-5] else "하락"
+            
+            # Volume trend analysis
+            volume_trend = "증가" if len(indicators['volume']) > 5 and np.mean(indicators['volume'][-3:]) > np.mean(indicators['volume'][-10:-3]) else "감소"
+            
+            # Moving average position
+            ma_position = "상승"
+            if (len(indicators['sma_5']) > 0 and len(indicators['sma_20']) > 0 and len(indicators['sma_60']) > 0):
+                if indicators['sma_5'][-1] > indicators['sma_20'][-1] > indicators['sma_60'][-1]:
+                    ma_position = "강한상승"
+                elif indicators['sma_5'][-1] < indicators['sma_20'][-1] < indicators['sma_60'][-1]:
+                    ma_position = "강한하락"
+                elif indicators['sma_5'][-1] > indicators['sma_20'][-1]:
+                    ma_position = "상승"
+                else:
+                    ma_position = "하락"
+            
+            # Volatility analysis
+            volatility = "보통"
+            if len(indicators['close']) > 20:
+                price_std = np.std(indicators['close'][-20:])
+                price_mean = np.mean(indicators['close'][-20:])
+                volatility_pct = (price_std / price_mean) * 100
+                if volatility_pct > 5:
+                    volatility = "높음"
+                elif volatility_pct < 2:
+                    volatility = "낮음"
+            
+            return {
+                "price_trend": price_trend,
+                "volume_trend": volume_trend,
+                "moving_average_position": ma_position,
+                "volatility": volatility,
+                "rsi_status": "과매수" if current_values.get('rsi', 50) > 70 else "과매도" if current_values.get('rsi', 50) < 30 else "적정",
+                "macd_status": "상승" if current_values.get('macd', 0) > current_values.get('macd_signal', 0) else "하락",
+                "bollinger_position": self._get_bollinger_position(indicators, current_values),
+                "support_resistance": self._get_support_resistance_levels(price_data),
+                "momentum_analysis": self._analyze_momentum(indicators),
+                "buy_signals_summary": f"{len(buy_signals)}개 매수신호: {', '.join(buy_signals[:3])}" if buy_signals else "매수신호 없음"
+            }
+            
+        except Exception as e:
+            self.logger.error(f"❌ AI analysis data preparation failed: {e}")
+            return {
+                "price_trend": "분석불가",
+                "volume_trend": "분석불가",
+                "moving_average_position": "분석불가",
+                "volatility": "분석불가",
+                "rsi_status": "분석불가",
+                "macd_status": "분석불가",
+                "bollinger_position": "분석불가",
+                "support_resistance": {},
+                "momentum_analysis": "분석불가",
+                "buy_signals_summary": "분석불가"
+            }
+    
+    def _get_bollinger_position(self, indicators: Dict[str, np.ndarray], current_values: Dict[str, float]) -> str:
+        """Get Bollinger Band position description"""
+        try:
+            if len(indicators['bb_upper']) > 0 and len(indicators['bb_lower']) > 0:
+                current_price = current_values.get('current_price', 0)
+                upper = indicators['bb_upper'][-1]
+                lower = indicators['bb_lower'][-1]
+                middle = indicators['bb_middle'][-1]
+                
+                if current_price > upper:
+                    return "상단밴드 돌파"
+                elif current_price > middle:
+                    return "중간선 위"
+                elif current_price > lower:
+                    return "중간선 아래"
+                else:
+                    return "하단밴드 근접"
+            return "분석불가"
+        except:
+            return "분석불가"
+    
+    def _get_support_resistance_levels(self, price_data: pd.DataFrame) -> Dict[str, float]:
+        """Calculate key support and resistance levels"""
+        try:
+            if len(price_data) < 20:
+                return {}
+            
+            recent_high = float(price_data['high'].tail(20).max())
+            recent_low = float(price_data['low'].tail(20).min())
+            current_price = float(price_data['close'].iloc[-1])
+            
+            return {
+                "support_level": recent_low,
+                "resistance_level": recent_high,
+                "current_position": (current_price - recent_low) / (recent_high - recent_low) * 100 if recent_high != recent_low else 50
+            }
+        except:
+            return {}
+    
+    def _analyze_momentum(self, indicators: Dict[str, np.ndarray]) -> str:
+        """Analyze price momentum"""
+        try:
+            if len(indicators['close']) < 5:
+                return "분석불가"
+            
+            # Recent price changes
+            recent_change = (indicators['close'][-1] - indicators['close'][-5]) / indicators['close'][-5] * 100
+            
+            # MACD momentum
+            macd_momentum = "상승" if len(indicators['macd_hist']) > 1 and indicators['macd_hist'][-1] > indicators['macd_hist'][-2] else "하락"
+            
+            if recent_change > 3:
+                return f"강한상승모멘텀 (+{recent_change:.1f}%, MACD {macd_momentum})"
+            elif recent_change > 0:
+                return f"상승모멘텀 (+{recent_change:.1f}%, MACD {macd_momentum})"
+            elif recent_change < -3:
+                return f"강한하락모멘텀 ({recent_change:.1f}%, MACD {macd_momentum})"
+            else:
+                return f"약한하락모멘텀 ({recent_change:.1f}%, MACD {macd_momentum})"
+        except:
+            return "분석불가"
     
     def get_summary_analysis(self, all_results: Dict[str, Dict[str, Any]]) -> Dict[str, Any]:
         """Generate summary analysis of all stocks"""
