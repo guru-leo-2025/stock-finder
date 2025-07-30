@@ -60,6 +60,7 @@ from slack_notifier import SlackNotifier
 # KRX API removed - no longer required
 # DART API removed - no longer required
 from technical_analyzer import TechnicalAnalyzer
+from ai_analyzer import AIStockAnalyzer
 
 class KiwoomTradingSystem:
     """Main trading system orchestrator"""
@@ -94,6 +95,7 @@ class KiwoomTradingSystem:
             self.kiwoom = KiwoomAPI()
             self.slack = SlackNotifier()
             self.technical = TechnicalAnalyzer()
+            self.ai_analyzer = AIStockAnalyzer()  # AI 분석기 추가
             # DART API removed - no longer required
             
             self.logger.info("✅ All components initialized successfully")
@@ -310,6 +312,36 @@ class KiwoomTradingSystem:
             
             self.logger.info(f"✅ 기술적 분석 완료: {len(technical_analysis_data)}/{len(limited_stocks)} 성공")
             
+            # 🤖 AI 분석 단계 - 기술적 분석 결과를 AI로 강화
+            if technical_analysis_data:
+                try:
+                    self.logger.info("🤖 AI 분석 시작...")
+                    ai_enhanced_results = self.ai_analyzer.analyze_stocks_with_technical_data(technical_analysis_data)
+                    
+                    if ai_enhanced_results:
+                        self.logger.info(f"✅ AI 분석 완료: {len(ai_enhanced_results)}개 종목")
+                        
+                        # AI 강화 결과로 enriched_stock_data 업데이트
+                        for stock_code, ai_analysis in ai_enhanced_results.items():
+                            if stock_code in enriched_stock_data:
+                                # 기존 데이터에 AI 분석 결과 추가
+                                enriched_stock_data[stock_code].update({
+                                    'ai_analysis': ai_analysis.get('ai_analysis', {}),
+                                    'final_recommendation': ai_analysis.get('final_recommendation', ai_analysis.get('recommendation', 'HOLD')),
+                                    'analysis_summary': ai_analysis.get('analysis_summary', {}),
+                                    'ai_enhanced': True
+                                })
+                            else:
+                                # 새로운 항목으로 추가
+                                enriched_stock_data[stock_code] = ai_analysis
+                                enriched_stock_data[stock_code]['ai_enhanced'] = True
+                    else:
+                        self.logger.warning("⚠️ AI 분석 결과가 없음")
+                        
+                except Exception as e:
+                    self.logger.error(f"❌ AI 분석 실패: {e}")
+                    # AI 분석 실패시에도 기술적 분석 결과는 사용
+            
             # AI Analysis removed as requested
             
             # Step 5: Send comprehensive Slack notifications
@@ -345,25 +377,32 @@ class KiwoomTradingSystem:
                 # Sort by technical score
                 stocks_with_scores.sort(key=lambda x: x.get('screening_score', 0), reverse=True)
                 
-                # Send to Slack with complete stock data
-                self.logger.info(f"📱 Sending {len(stocks_with_scores)} stocks to Slack with full data")
+                # AI 강화 분석이 있으면 AI 강화 결과로 전송, 없으면 기술적 분석 결과로 전송
+                has_ai_analysis = any(info.get('ai_enhanced', False) for info in enriched_stock_data.values())
                 
-                # Debug: Log first stock data to verify structure
-                if stocks_with_scores:
-                    sample = stocks_with_scores[0]
-                    self.logger.info(f"📊 Sample stock data: {sample.get('stock_name')} - Price: {sample.get('current_price')} - Market: {sample.get('market_status')}")
-                
-                success = self.slack.send_stock_condition_result(
-                    stocks_with_scores,  # Send complete data directly instead of simplified slack_data
-                    "10stars 기술적분석", 
-                    {}, 
-                    technical_analysis_data
-                )
-                
-                if success:
-                    self.logger.info("✅ Slack 기술적 분석 결과 전송 완료")
+                if has_ai_analysis:
+                    self.logger.info(f"📱 AI 강화 분석 결과를 Slack으로 전송: {len(technical_analysis_data)}개 종목")
+                    success = self.slack.send_ai_enhanced_analysis(
+                        technical_analysis_data,  # AI 강화된 기술적 분석 데이터
+                        "10stars AI 강화 분석"
+                    )
+                    if success:
+                        self.logger.info("✅ Slack AI 강화 분석 결과 전송 완료")
+                    else:
+                        self.logger.warning("⚠️ Slack AI 강화 분석 결과 전송 실패")
                 else:
-                    self.logger.warning("⚠️ Slack 기술적 분석 결과 전송 실패")
+                    # AI 분석이 없으면 기존 기술적 분석 결과로 전송
+                    self.logger.info(f"📱 기술적 분석 결과를 Slack으로 전송: {len(stocks_with_scores)}개 종목")
+                    success = self.slack.send_stock_condition_result(
+                        stocks_with_scores,
+                        "10stars 기술적분석", 
+                        {}, 
+                        technical_analysis_data
+                    )
+                    if success:
+                        self.logger.info("✅ Slack 기술적 분석 결과 전송 완료")
+                    else:
+                        self.logger.warning("⚠️ Slack 기술적 분석 결과 전송 실패")
                     
             except Exception as e:
                 self.logger.error(f"❌ Slack 알림 실패: {e}")

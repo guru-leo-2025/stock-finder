@@ -290,6 +290,14 @@ if %ERRORLEVEL% neq 0 (
     exit /b 1
 )
 
+echo Testing AI Analyzer module...
+python -c "from ai_analyzer import AIStockAnalyzer; print('✅ AI Analyzer module: OK')" 2>nul
+if %ERRORLEVEL% neq 0 (
+    echo ❌ AI Analyzer module test failed
+    pause
+    exit /b 1
+)
+
 echo SUCCESS: All modules loaded successfully
 
 REM 14. Display system status
