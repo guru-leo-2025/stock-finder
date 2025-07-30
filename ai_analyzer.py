@@ -332,10 +332,16 @@ JSON 형식으로 응답해 주세요.
     def _get_technical_ai_analysis(self, stock_code: str, technical_data: Dict) -> Optional[Dict]:
         """Get AI analysis based on technical analysis data"""
         try:
+            self.logger.info(f"🤖 {stock_code} AI 분석 시작...")
+            
             # Create enhanced technical analysis prompt
             prompt = self._create_technical_analysis_prompt(stock_code, technical_data)
             
+            # Save prompt to data directory for debugging
+            self._save_analysis_data(stock_code, 'prompt', prompt)
+            
             # Call OpenAI API with technical data context
+            self.logger.info(f"🔗 OpenAI API 호출: {self.model}")
             response = self.client.chat.completions.create(
                 model=self.model,
                 messages=[
@@ -355,17 +361,32 @@ JSON 형식으로 응답해 주세요.
             
             # Parse response
             content = response.choices[0].message.content
-            analysis = json.loads(content)
+            self.logger.info(f"✅ {stock_code} OpenAI 응답 수신 완료")
+            
+            try:
+                analysis = json.loads(content)
+            except json.JSONDecodeError as e:
+                self.logger.error(f"❌ {stock_code} JSON 파싱 실패: {e}")
+                self.logger.error(f"Raw content: {content}")
+                return None
             
             # Add metadata
             analysis['ai_model'] = self.model
             analysis['analysis_timestamp'] = datetime.now().isoformat()
             analysis['tokens_used'] = response.usage.total_tokens
+            analysis['stock_code'] = stock_code
+            analysis['stock_name'] = technical_data.get('stock_name', stock_code)
             
+            # Save analysis result to data directory
+            self._save_analysis_data(stock_code, 'ai_analysis', analysis)
+            
+            self.logger.info(f"✅ {stock_code} AI 분석 완료")
             return analysis
             
         except Exception as e:
-            self.logger.error(f"❌ Error getting technical AI analysis for {stock_code}: {e}")
+            self.logger.error(f"❌ {stock_code} AI 분석 실패: {e}")
+            import traceback
+            self.logger.error(f"Error details: {traceback.format_exc()}")
             return None
     
     def _get_technical_system_prompt(self) -> str:
@@ -415,16 +436,33 @@ Response format must be JSON with these fields:
         technical_summary = technical_data.get('technical_summary', {})
         market_data = technical_data.get('market_data', {})
         
+        # Safe number formatting
+        def safe_format_number(value, decimals=0):
+            try:
+                if value == 'N/A' or value is None:
+                    return 'N/A'
+                return f"{float(value):,.{decimals}f}"
+            except:
+                return str(value)
+        
+        def safe_format_currency(value):
+            try:
+                if value == 'N/A' or value is None:
+                    return 'N/A'
+                return f"{float(value):,.0f}원"
+            except:
+                return str(value)
+        
         prompt = f"""
 종목 기술적 분석 AI 강화 요청:
 
 === 기본 정보 ===
 - 종목명: {stock_name}
 - 종목코드: {stock_code}
-- 현재가: {market_data.get('current_price', 'N/A'):,}원
-- 거래량: {market_data.get('volume', 'N/A'):,}주
-- 52주 최고가: {market_data.get('high_52w', 'N/A'):,}원
-- 52주 최저가: {market_data.get('low_52w', 'N/A'):,}원
+- 현재가: {safe_format_currency(market_data.get('current_price'))}
+- 거래량: {safe_format_number(market_data.get('volume'))}주
+- 52주 최고가: {safe_format_currency(market_data.get('high_52w'))}
+- 52주 최저가: {safe_format_currency(market_data.get('low_52w'))}
 
 === 기술적 분석 결과 ===
 - 기술적 점수: {technical_score:.1f}점 (100점 만점)
@@ -432,15 +470,26 @@ Response format must be JSON with these fields:
 - 리스크 수준: {risk_level}
 
 === 기술적 지표 ===
-- RSI: {indicators.get('rsi', 'N/A')}
-- MACD: {indicators.get('macd', 'N/A'):.4f} (신호선: {indicators.get('macd_signal', 'N/A'):.4f})
-- 5일 이평선: {indicators.get('sma_5', 'N/A'):,}원
-- 20일 이평선: {indicators.get('sma_20', 'N/A'):,}원
-- 현재 주가 위치: {indicators.get('current_price', 'N/A'):,}원
-- 스토캐스틱 %K: {indicators.get('stoch_k', 'N/A'):.1f}
-- 스토캐스틱 %D: {indicators.get('stoch_d', 'N/A'):.1f}
+- RSI: {safe_format_number(indicators.get('rsi'), 1)}
+- MACD: {safe_format_number(indicators.get('macd'), 4)} (신호선: {safe_format_number(indicators.get('macd_signal'), 4)})
+- 5일 이평선: {safe_format_currency(indicators.get('sma_5'))}
+- 20일 이평선: {safe_format_currency(indicators.get('sma_20'))}
+- 스토캐스틱 %K: {safe_format_number(indicators.get('stoch_k'), 1)}
+- 스토캐스틱 %D: {safe_format_number(indicators.get('stoch_d'), 1)}
 
-위의 종합적인 기술적 분석 데이터를 바탕으로 AI 관점에서 투자 분석을 제공해 주세요.
+=== 매수 신호 ===
+{', '.join(buy_signals) if buy_signals else '매수신호 없음'}
+
+=== 추가 분석 정보 ===
+- 가격 추세: {technical_summary.get('price_trend', '분석불가')}
+- 거래량 추세: {technical_summary.get('volume_trend', '분석불가')}
+- 이동평균선 배열: {technical_summary.get('moving_average_position', '분석불가')}
+- 변동성 수준: {technical_summary.get('volatility', '분석불가')}
+- 볼린저밴드 위치: {technical_summary.get('bollinger_position', '분석불가')}
+- 모멘텀 분석: {technical_summary.get('momentum_analysis', '분석불가')}
+
+위 데이터를 바탕으로 이 종목에 대한 상세한 투자 분석을 제공해 주세요. 
+분석은 3-5개의 명확한 문장으로 구성하고, 투자자가 이해하기 쉽게 작성해 주세요.
 """
         
         return prompt
@@ -503,6 +552,74 @@ Response format must be JSON with these fields:
         except Exception as e:
             self.logger.error(f"❌ Error determining final recommendation: {e}")
             return technical_rec
+    
+    def _save_analysis_data(self, stock_code: str, data_type: str, data: any) -> None:
+        """Save analysis data to data directory"""
+        try:
+            import os
+            from pathlib import Path
+            
+            # Create data directory if it doesn't exist
+            data_dir = Path('data')
+            data_dir.mkdir(exist_ok=True)
+            
+            # Create timestamp for filename
+            timestamp = datetime.now().strftime('%Y%m%d_%H%M%S')
+            filename = f"{stock_code}_{data_type}_{timestamp}.json"
+            filepath = data_dir / filename
+            
+            # Save data as JSON
+            if isinstance(data, str):
+                # For text data like prompts
+                save_data = {
+                    'stock_code': stock_code,
+                    'data_type': data_type,
+                    'timestamp': timestamp,
+                    'content': data
+                }
+            else:
+                # For dict data like analysis results
+                save_data = data
+            
+            with open(filepath, 'w', encoding='utf-8') as f:
+                json.dump(save_data, f, ensure_ascii=False, indent=2)
+            
+            self.logger.info(f"💾 {stock_code} {data_type} 데이터 저장: {filepath}")
+            
+        except Exception as e:
+            self.logger.error(f"❌ {stock_code} 데이터 저장 실패: {e}")
+    
+    def get_formatted_analysis_sentences(self, ai_analysis: Dict) -> List[str]:
+        """Convert AI analysis reasoning into formatted sentences for Slack display"""
+        try:
+            reasoning = ai_analysis.get('ai_reasoning', '')
+            if not reasoning:
+                return ["AI 분석 정보가 없습니다."]
+            
+            # Split into sentences and clean up
+            sentences = []
+            
+            # Split by common sentence endings
+            raw_sentences = reasoning.replace('。', '.').split('.')
+            
+            for sentence in raw_sentences:
+                cleaned = sentence.strip()
+                if cleaned and len(cleaned) > 10:  # Filter out very short fragments
+                    # Ensure sentence ends properly
+                    if not cleaned.endswith(('.', '!', '?')):
+                        cleaned += '.'
+                    sentences.append(cleaned)
+            
+            # If no proper sentences found, return the original reasoning
+            if not sentences:
+                return [reasoning[:200] + "..." if len(reasoning) > 200 else reasoning]
+            
+            # Limit to 4 sentences for Slack display
+            return sentences[:4]
+            
+        except Exception as e:
+            self.logger.error(f"❌ AI 분석 문장 포맷팅 실패: {e}")
+            return ["AI 분석 정보를 처리하는 중 오류가 발생했습니다."]
     
     def get_market_sentiment(self, market_indices: Dict = None) -> Dict[str, Any]:
         """Analyze overall market sentiment"""

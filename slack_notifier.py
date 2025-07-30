@@ -1091,12 +1091,18 @@ class SlackNotifier:
                 factors_text = ' | '.join(key_factors[:3])
                 stock_text += f"💡 핵심요인: {factors_text}\n"
             
-            # AI 분석 요약 (간단히)
-            if len(ai_reasoning) > 100:
-                ai_summary = ai_reasoning[:100] + "..."
+            # AI 분석 요약 (문장별로 표시)
+            if ai_reasoning:
+                # AI 분석 내용을 문장으로 분리
+                sentences = self._format_ai_analysis_sentences(ai_reasoning)
+                if sentences:
+                    stock_text += f"🤖 **AI분석**:\n"
+                    for i, sentence in enumerate(sentences[:3], 1):  # 최대 3개 문장
+                        stock_text += f"• {sentence}\n"
+                else:
+                    stock_text += f"🤖 AI분석: {ai_reasoning[:100]}{'...' if len(ai_reasoning) > 100 else ''}"
             else:
-                ai_summary = ai_reasoning
-            stock_text += f"🤖 AI분석: {ai_summary}"
+                stock_text += f"🤖 AI분석: 분석 정보 없음"
             
             # 액션 버튼
             action_buttons = [
@@ -1153,3 +1159,50 @@ class SlackNotifier:
         ]))
         
         return blocks
+    
+    def _format_ai_analysis_sentences(self, ai_reasoning: str) -> List[str]:
+        """Format AI analysis reasoning into clean sentences for Slack display"""
+        try:
+            if not ai_reasoning or ai_reasoning.strip() == "AI 분석 정보 없음":
+                return []
+            
+            # Split into sentences and clean up
+            sentences = []
+            
+            # Split by common sentence endings (Korean and English)
+            import re
+            # Split by periods, exclamation marks, question marks
+            raw_sentences = re.split(r'[.!?。！？]', ai_reasoning)
+            
+            for sentence in raw_sentences:
+                cleaned = sentence.strip()
+                # Filter out very short fragments or common filler words
+                if cleaned and len(cleaned) > 15 and not cleaned.lower().startswith(('the', 'a', 'an', 'this', 'that')):
+                    # Remove leading bullet points or numbers
+                    cleaned = re.sub(r'^[\d\-•*\s]+', '', cleaned).strip()
+                    
+                    # Ensure sentence starts with capital letter (for English) or proper Korean
+                    if cleaned and not cleaned[0].isupper() and cleaned[0].isalpha():
+                        cleaned = cleaned[0].upper() + cleaned[1:]
+                    
+                    # Add period if missing
+                    if cleaned and not cleaned.endswith(('.', '!', '?', '다', '음', '요')):
+                        cleaned += '.'
+                    
+                    sentences.append(cleaned)
+            
+            # If no proper sentences found, try splitting by line breaks
+            if not sentences:
+                lines = ai_reasoning.split('\n')
+                for line in lines:
+                    cleaned = line.strip()
+                    if cleaned and len(cleaned) > 15:
+                        sentences.append(cleaned)
+            
+            # Limit to 4 sentences for better display
+            return sentences[:4]
+            
+        except Exception as e:
+            self.logger.error(f"❌ AI 분석 문장 포맷팅 실패: {e}")
+            # Return the original text truncated as fallback
+            return [ai_reasoning[:150] + "..." if len(ai_reasoning) > 150 else ai_reasoning]
