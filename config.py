@@ -31,11 +31,8 @@ class SlackConfig:
     bot_token: str = field(default_factory=lambda: os.getenv('SLACK_BOT_TOKEN', ''))
     channel: str = field(default_factory=lambda: os.getenv('SLACK_CHANNEL', '#trading-alerts'))
 
-@dataclass
-class KRXConfig:
-    """KRX Market Data API configuration"""
-    api_key: str = field(default_factory=lambda: os.getenv('KRX_API_KEY', ''))
-    base_url: str = field(default_factory=lambda: os.getenv('KRX_BASE_URL', 'http://data.krx.co.kr'))
+# KRX API configuration removed - no longer required
+# DART API configuration removed - no longer required
 
 @dataclass
 class TradingConfig:
@@ -43,6 +40,8 @@ class TradingConfig:
     max_stocks: int = field(default_factory=lambda: int(os.getenv('MAX_STOCKS_TO_ANALYZE', '10')))
     trading_mode: str = field(default_factory=lambda: os.getenv('TRADING_MODE', 'TEST'))
     analysis_interval: int = field(default_factory=lambda: int(os.getenv('ANALYSIS_INTERVAL', '300')))  # 5 minutes
+
+# n8n integration removed as requested
 
 @dataclass
 class LoggingConfig:
@@ -58,7 +57,8 @@ class AppConfig:
     kiwoom: KiwoomConfig = field(default_factory=KiwoomConfig)
     openai: OpenAIConfig = field(default_factory=OpenAIConfig)
     slack: SlackConfig = field(default_factory=SlackConfig)
-    krx: KRXConfig = field(default_factory=KRXConfig)
+# krx: KRXConfig removed
+# dart: DartConfig removed
     trading: TradingConfig = field(default_factory=TradingConfig)
     logging: LoggingConfig = field(default_factory=LoggingConfig)
     
@@ -94,9 +94,6 @@ class AppConfig:
         
         return errors
     
-    def is_test_mode(self) -> bool:
-        """Check if running in test mode"""
-        return self.trading.trading_mode == 'TEST'
 
 # Global configuration instance
 config = AppConfig()

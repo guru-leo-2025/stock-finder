@@ -38,3 +38,10 @@ openpyxl>=3.1.0
 
 # Financial data (optional)
 yfinance>=0.2.0
+
+# DART API integration (for enhanced financial data)
+requests>=2.31.0  # Already included above
+lxml>=4.9.0  # For XML parsing of DART data
+
+# Additional data formatting
+beautifulsoup4>=4.12.0  # For HTML/XML parsing if needed

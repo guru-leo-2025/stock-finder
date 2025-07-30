@@ -55,8 +55,11 @@ setup_logging()
 # Now import other modules
 import json
 from config import config
-from kiwoom_api import KiwoomAPI, MockKiwoomAPI
-from slack_notifier import SlackNotifier, MockSlackNotifier
+from kiwoom_api import KiwoomAPI
+from slack_notifier import SlackNotifier
+# KRX API removed - no longer required
+# DART API removed - no longer required
+from technical_analyzer import TechnicalAnalyzer
 
 class KiwoomTradingSystem:
     """Main trading system orchestrator"""
@@ -86,17 +89,12 @@ class KiwoomTradingSystem:
         try:
             self.logger.info("🔧 Initializing system components...")
             
-            # Check if running in test mode
-            is_test_mode = config.is_test_mode()
-            
-            if is_test_mode:
-                self.logger.info("🧪 Running in TEST mode - using mock components")
-                self.kiwoom = MockKiwoomAPI()
-                self.slack = MockSlackNotifier()
-            else:
-                self.logger.info("🏭 Running in LIVE mode - using real APIs")
-                self.kiwoom = KiwoomAPI()
-                self.slack = SlackNotifier()
+            # Initialize real components only - no mock mode
+            self.logger.info("🏭 Initializing production components")
+            self.kiwoom = KiwoomAPI()
+            self.slack = SlackNotifier()
+            self.technical = TechnicalAnalyzer()
+            # DART API removed - no longer required
             
             self.logger.info("✅ All components initialized successfully")
             
@@ -226,9 +224,9 @@ class KiwoomTradingSystem:
         return True
     
     async def _run_full_analysis(self) -> bool:
-        """Run simple 10stars condition and save to JSON"""
+        """Run comprehensive technical analysis with Kiwoom API only"""
         try:
-            self.logger.info("🔍 10stars 조건식 검색 시작")
+            self.logger.info("🔍 Kiwoom API 기반 10stars 조건식 분석 시작")
             start_time = datetime.now()
             
             # Step 1: Get stocks from 10stars screening condition
@@ -243,7 +241,7 @@ class KiwoomTradingSystem:
             limited_stocks = stock_codes[:10]
             self.logger.info(f"✅ 10stars 조건에서 {len(limited_stocks)}개 종목 발견")
             
-            # Step 2: Get stock names and codes
+            # Step 2: Get stock names and basic info with market data
             self.logger.info("📊 종목 정보 수집...")
             stock_data = self.kiwoom.get_stock_info(limited_stocks)
             
@@ -251,36 +249,196 @@ class KiwoomTradingSystem:
                 self.logger.warning("⚠️ 종목 정보를 가져올 수 없습니다")
                 return False
             
-            # Step 3: Create JSON data for n8n automation
+            # Step 3: Get historical price data and perform comprehensive technical analysis
+            self.logger.info("📈 종합 기술적 분석 수행...")
+            technical_analysis_data = {}
+            enriched_stock_data = {}
+            
+            for stock_code in limited_stocks:
+                try:
+                    self.logger.info(f"📊 {stock_code} 기술적 분석 시작...")
+                    
+                    # Get historical price data (100 days for comprehensive analysis)
+                    price_data = self.kiwoom.get_stock_chart_data(stock_code, period="D", count=100)
+                    
+                    if not price_data.empty:
+                        # Perform comprehensive technical analysis
+                        analysis = self.technical.analyze_stock(stock_code, price_data)
+                        technical_analysis_data[stock_code] = analysis
+                        
+                        # Enrich stock data with technical indicators and real data
+                        stock_info = stock_data.get(stock_code, {})
+                        
+                        # Ensure we use real technical analysis data with detailed scores
+                        enriched_info = {
+                            **stock_info,  # This includes real price, volume, market_cap from Kiwoom API
+                            'technical_score': analysis.get('technical_score', 50),  # Real technical score
+                            'detailed_scores': analysis.get('detailed_scores', {}),  # Individual indicator scores
+                            'trend': analysis.get('trend', 'NEUTRAL'),
+                            'rsi': analysis.get('indicators', {}).get('rsi', 'N/A'),
+                            'macd_signal': analysis.get('macd_signal', 'NEUTRAL'),
+                            'volume_trend': analysis.get('volume_trend', 'NORMAL'),
+                            'support_level': analysis.get('support_level', 'N/A'),
+                            'resistance_level': analysis.get('resistance_level', 'N/A'),
+                            'recommendation': analysis.get('recommendation', 'HOLD'),
+                            'buy_signals': analysis.get('buy_signals', []),
+                            'risk_level': analysis.get('risk_level', '보통')
+                        }
+                        enriched_stock_data[stock_code] = enriched_info
+                        
+                        self.logger.info(f"✅ {stock_code} 기술적 분석 완료 - 점수: {analysis.get('technical_score', 'N/A')}")
+                    else:
+                        self.logger.warning(f"⚠️ {stock_code} 가격 데이터 없음")
+                        # Add basic info even without technical analysis
+                        enriched_stock_data[stock_code] = {
+                            **stock_data.get(stock_code, {}),
+                            'technical_score': 50,
+                            'trend': 'UNKNOWN',
+                            'recommendation': 'HOLD'
+                        }
+                        
+                except Exception as e:
+                    self.logger.error(f"❌ {stock_code} 기술적 분석 실패: {e}")
+                    # Add basic info even on failure
+                    enriched_stock_data[stock_code] = {
+                        **stock_data.get(stock_code, {}),
+                        'technical_score': 30,
+                        'trend': 'ERROR',
+                        'recommendation': 'HOLD'
+                    }
+                    continue
+            
+            self.logger.info(f"✅ 기술적 분석 완료: {len(technical_analysis_data)}/{len(limited_stocks)} 성공")
+            
+            # AI Analysis removed as requested
+            
+            # Step 5: Send comprehensive Slack notifications
+            self.logger.info("📱 Slack 종합 분석 결과 전송...")
+            
+            # Send main technical analysis results
+            try:
+                # Create stock list with technical scores for ranking
+                stocks_with_scores = []
+                for stock_code, info in enriched_stock_data.items():
+                    stock_entry = {
+                        'stock_code': stock_code,
+                        'stock_name': info.get('name', stock_code),
+                        'current_price': info.get('current_price', 0),
+                        'change_rate': info.get('change_rate', 0),
+                        'volume': info.get('volume', 0),
+                        'market_cap': info.get('market_cap', 0),
+                        'screening_score': info.get('technical_score', 50),
+                        'technical_score': info.get('technical_score', 50),  # Ensure both field names are available
+                        'detailed_scores': info.get('detailed_scores', {}),  # Individual indicator scores
+                        'trend': info.get('trend', 'NEUTRAL'),
+                        'recommendation': info.get('recommendation', 'HOLD'),
+                        'rsi': info.get('rsi', 'N/A'),
+                        'macd_signal': info.get('macd_signal', 'NEUTRAL'),
+                        'buy_signals': info.get('buy_signals', []),
+                        'risk_level': info.get('risk_level', '보통'),
+                        'market_status': info.get('market_status', '확인중'),
+                        'price_type': info.get('price_type', '현재가'),
+                        'is_closing_price': info.get('is_closing_price', False)
+                    }
+                    stocks_with_scores.append(stock_entry)
+                
+                # Sort by technical score
+                stocks_with_scores.sort(key=lambda x: x.get('screening_score', 0), reverse=True)
+                
+                # Send to Slack with complete stock data
+                self.logger.info(f"📱 Sending {len(stocks_with_scores)} stocks to Slack with full data")
+                
+                # Debug: Log first stock data to verify structure
+                if stocks_with_scores:
+                    sample = stocks_with_scores[0]
+                    self.logger.info(f"📊 Sample stock data: {sample.get('stock_name')} - Price: {sample.get('current_price')} - Market: {sample.get('market_status')}")
+                
+                success = self.slack.send_stock_condition_result(
+                    stocks_with_scores,  # Send complete data directly instead of simplified slack_data
+                    "10stars 기술적분석", 
+                    {}, 
+                    technical_analysis_data
+                )
+                
+                if success:
+                    self.logger.info("✅ Slack 기술적 분석 결과 전송 완료")
+                else:
+                    self.logger.warning("⚠️ Slack 기술적 분석 결과 전송 실패")
+                    
+            except Exception as e:
+                self.logger.error(f"❌ Slack 알림 실패: {e}")
+            
+            # AI analysis removed as requested
+            
+            # Step 6: Export analysis data
+            self.logger.info("💾 분석 결과 데이터 내보내기...")
+            
+            # Create comprehensive export data
+            export_data = {
+                'timestamp': datetime.now().isoformat(),
+                'condition_name': '10stars',
+                'stock_count': len(limited_stocks),
+                'stocks': list(enriched_stock_data.values()),
+                'technical_analysis': technical_analysis_data,
+                'summary': {
+                    'processing_time_seconds': (datetime.now() - start_time).total_seconds(),
+                    'data_sources': ['Kiwoom', 'TechnicalAnalysis'],
+                    'analysis_count': self.analysis_count + 1,
+                    'successful_analysis': len(technical_analysis_data),
+                    'avg_technical_score': sum(s.get('technical_score', 0) for s in enriched_stock_data.values()) / len(enriched_stock_data) if enriched_stock_data else 0
+                }
+            }
+            
+            # Save comprehensive analysis data
+            timestamp = datetime.now().strftime('%Y%m%d_%H%M%S')
+            filename = f"data/technical_analysis_{timestamp}.json"
+            
+            # Ensure data directory exists
+            import os
+            os.makedirs('data', exist_ok=True)
+            
+            with open(filename, 'w', encoding='utf-8') as f:
+                json.dump(export_data, f, ensure_ascii=False, indent=2, default=str)
+            
+            self.logger.info(f"💾 분석 결과 저장 완료: {filename}")
+            
+            # Create JSON file for data backup and analysis
             stocks_json = []
-            for code, info in stock_data.items():
+            for code, info in enriched_stock_data.items():
                 stocks_json.append({
                     "code": code,
-                    "name": info.get('name', '')
+                    "name": info.get('name', ''),
+                    "current_price": info.get('current_price', 0),
+                    "change_rate": info.get('change_rate', 0),
+                    "volume": info.get('volume', 0),
+                    "market_cap": info.get('market_cap', 0),
+                    "technical_score": info.get('technical_score', 50),
+                    "detailed_scores": info.get('detailed_scores', {}),
+                    "recommendation": info.get('recommendation', 'HOLD'),
+                    "risk_level": info.get('risk_level', '보통'),
+                    "buy_signals": info.get('buy_signals', []),
+                    "market_status": info.get('market_status', '확인중')
                 })
             
-            # Step 4: Save to JSON file for n8n
             json_data = {
                 "timestamp": datetime.now().isoformat(),
-                "condition_name": "10stars",
+                "condition_name": "10stars_technical",
                 "total_stocks": len(stocks_json),
+                "market_analysis_summary": {
+                    "avg_technical_score": sum(s.get('technical_score', 0) for s in stocks_json) / len(stocks_json) if stocks_json else 0,
+                    "high_score_stocks": len([s for s in stocks_json if s.get('technical_score', 0) >= 70]),
+                    "buy_recommendations": len([s for s in stocks_json if '매수' in s.get('recommendation', '')]),
+                    "total_buy_signals": sum(len(s.get('buy_signals', [])) for s in stocks_json)
+                },
                 "stocks": stocks_json
             }
             
-            json_file_path = "data/10stars_stocks.json"
+            json_file_path = "data/10stars_technical_analysis.json"
             with open(json_file_path, 'w', encoding='utf-8') as f:
                 json.dump(json_data, f, ensure_ascii=False, indent=2)
             
-            self.logger.info(f"💾 JSON 파일 저장 완료: {json_file_path}")
-            
-            # Step 5: Send to Slack for n8n automation
-            self.logger.info("📤 슬랙으로 결과 전송...")
-            slack_success = await self._send_stocks_to_slack(json_data)
-            
-            if slack_success:
-                self.logger.info("✅ 슬랙 전송 완료")
-            else:
-                self.logger.warning("⚠️ 슬랙 전송 실패 (JSON 파일은 생성됨)")
+            self.logger.info(f"💾 기술적 분석 JSON 파일 저장 완료: {json_file_path}")
+            self.logger.info(f"📊 분석 요약 - 평균점수: {json_data['market_analysis_summary']['avg_technical_score']:.1f}, 고득점: {json_data['market_analysis_summary']['high_score_stocks']}개")
             
             # Update statistics
             self.last_analysis_time = datetime.now()
@@ -288,34 +446,21 @@ class KiwoomTradingSystem:
             self.error_count = 0  # Reset error count on successful analysis
             
             duration = (datetime.now() - start_time).total_seconds()
-            self.logger.info(f"🎉 10stars 분석 및 전송 완료! ({duration:.1f}초)")
+            self.logger.info(f"🎉 Kiwoom 기술적 분석 완료! ({duration:.1f}초)")
             
             return True  # 성공 반환
             
         except Exception as e:
-            self.logger.error(f"❌ 10stars 분석 중 오류: {e}")
+            self.logger.error(f"❌ 기술적 분석 중 오류: {e}")
             self.logger.error(traceback.format_exc())
-            await self._send_error_notification(str(e), "10stars analysis")
+            await self._send_error_notification(str(e), "Technical analysis")
             return False  # 실패 반환
-    
-    async def _send_stocks_to_slack(self, json_data: Dict[str, Any]) -> bool:
-        """Send 10stars stocks to Slack for n8n automation"""
+
+    async def _send_stocks_to_slack(self, json_data: Dict[str, Any], webhook_success: bool = False, krx_data: Dict[str, Dict] = None, technical_data: Dict[str, Dict] = None) -> bool:
+        """Send 10stars stocks to Slack in slack_message.txt format"""
         try:
-            message = f"""🌟 **10stars 조건식 결과** 🌟
-
-📅 **분석 시간**: {json_data['timestamp'][:19]}
-📊 **총 종목 수**: {json_data['total_stocks']}개
-
-**검색된 종목들**:
-"""
-            
-            for i, stock in enumerate(json_data['stocks'], 1):
-                message += f"{i:2d}. **{stock['name']}** ({stock['code']})\n"
-            
-            message += "\n💾 JSON 파일: `data/10stars_stocks.json`\n"
-            message += "🤖 n8n 자동화 준비 완료"
-            
-            return self.slack.send_message(message)
+            # Use the new send_stock_condition_result method for slack_message.txt format
+            return self.slack.send_stock_condition_result(json_data, "10stars", krx_data, technical_data)
             
         except Exception as e:
             self.logger.error(f"❌ 슬랙 전송 오류: {e}")

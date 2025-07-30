@@ -470,7 +470,7 @@ class KiwoomAPI(QObject):
             return []
     
     def get_stock_info(self, stock_codes: List[str]) -> Dict[str, Dict]:
-        """Get basic stock information - 종목 코드와 이름만 수집"""
+        """Get detailed stock information with real-time data"""
         if not self.connected:
             self.logger.error("❌ Not connected to Kiwoom server")
             return {}
@@ -478,39 +478,95 @@ class KiwoomAPI(QObject):
         stock_info = {}
         
         try:
+            # Check market hours first
+            market_status = self._get_market_status()
+            self.logger.info(f"📊 Market Status: {market_status}")
+            
             for i, stock_code in enumerate(stock_codes, 1):
                 self.logger.info(f"📊 종목 정보 수집 중 ({i}/{len(stock_codes)}): {stock_code}")
                 
                 try:
-                    # 종목명 조회 (Master API 사용)
+                    # 기본 정보 수집
                     stock_name = self.ocx.GetMasterCodeName(stock_code).strip()
                     
-                    # 종목명이 없으면 대체명 사용
                     if not stock_name:
                         stock_name = f"종목_{stock_code}"
                         self.logger.warning(f"⚠️ 종목명 조회 실패: {stock_code} -> {stock_name}")
                     
-                    # 결과 저장 (코드와 이름만)
+                    # Get real-time stock data using TR request
+                    realtime_info = self._get_realtime_stock_info(stock_code)
+                    
+                    # 상세 시장 정보 수집 (Master API)
+                    try:
+                        detailed_info = self._get_detailed_stock_info(stock_code)
+                    except Exception as e:
+                        self.logger.warning(f"⚠️ Failed to get detailed info for {stock_code}: {e}")
+                        detailed_info = {}  # 빈 딕셔너리로 초기화
+                    
+                    # Merge realtime and detailed info, prioritizing realtime data
+                    if realtime_info:
+                        combined_info = {**detailed_info, **realtime_info}
+                    else:
+                        combined_info = detailed_info
+                    
+                    # Try to get price data but don't filter out stocks if it fails
+                    current_price = combined_info.get('current_price', 0)
+                    if not current_price or current_price <= 0:
+                        # Try one more fallback with Master API directly
+                        try:
+                            fallback_price = self.ocx.GetMasterLastPrice(stock_code)
+                            if fallback_price:
+                                fallback_price = self._clean_number(fallback_price)
+                                if fallback_price > 0:
+                                    combined_info['current_price'] = fallback_price
+                                    combined_info['data_source'] = 'master_fallback'
+                                    current_price = fallback_price
+                                    self.logger.info(f"✅ Master fallback success for {stock_code}: {fallback_price:,}원")
+                        except Exception as fallback_error:
+                            self.logger.debug(f"Fallback failed: {fallback_error}")
+                    
+                    # Show all stocks regardless of price data availability
+                    if not current_price or current_price <= 0:
+                        self.logger.info(f"📊 {stock_code} 가격 데이터 없음 - 종목 포함 (가격: 0원)")
+                        combined_info['current_price'] = 0
+                        combined_info['data_source'] = 'no_data'
+                    
+                    # Calculate market cap if we have price and shares
+                    if combined_info.get('current_price') and combined_info.get('listed_shares'):
+                        market_cap = combined_info['current_price'] * combined_info['listed_shares']
+                        combined_info['market_cap'] = market_cap
+                    
+                    # Add market status
+                    combined_info['market_status'] = market_status
+                    
+                    # 결과 저장 (오직 유효한 가격 데이터가 있는 종목만)
                     stock_info[stock_code] = {
                         'name': stock_name,
                         'code': stock_code,
-                        'timestamp': datetime.now().isoformat()
+                        'timestamp': datetime.now().isoformat(),
+                        **combined_info
                     }
+                    
+                    price_display = f"{current_price:,}원"
+                    volume_display = combined_info.get('volume', 0)
+                    if isinstance(volume_display, (int, float)) and volume_display > 0:
+                        volume_display = f"{volume_display:,}주"
+                    else:
+                        volume_display = "거래량 정보 없음"
                     
                     self.logger.info(f"  ✅ {stock_name} ({stock_code})")
+                    self.logger.info(f"    현재가: {price_display}, 거래량: {volume_display}")
+                    self.logger.info(f"    시가총액: {self._format_market_cap(combined_info.get('market_cap', 0))}")
                     
                 except Exception as stock_error:
-                    self.logger.warning(f"⚠️ 종목 {stock_code} 정보 수집 실패: {stock_error}")
-                    
-                    # 실패해도 기본 정보는 저장
-                    stock_info[stock_code] = {
-                        'name': f"종목_{stock_code}",
-                        'code': stock_code,
-                        'timestamp': datetime.now().isoformat()
-                    }
+                    self.logger.warning(f"⚠️ 종목 {stock_code} 정보 수집 실패 - 제외: {stock_error}")
+                    import traceback
+                    self.logger.debug(traceback.format_exc())
+                    # 실패한 종목은 결과에 포함하지 않음
+                    continue
                 
-                # 빠른 처리를 위해 대기시간 단축
-                time.sleep(0.1)
+                # API 요청 간격 조정
+                time.sleep(0.3)
                     
         except Exception as e:
             self.logger.error(f"❌ 종목 정보 수집 중 전체 오류: {e}")
@@ -519,6 +575,473 @@ class KiwoomAPI(QObject):
         
         self.logger.info(f"📊 총 {len(stock_info)}개 종목 정보 수집 완료")
         return stock_info
+    
+
+    def _get_detailed_stock_info(self, stock_code: str) -> Dict[str, Any]:
+        """Get comprehensive stock information using Kiwoom Master API and TR requests"""
+        detailed_info = {}  # 초기화 필수!
+        
+        try:
+            # 1. opt10001 TR로 기본 정보 가져오기 (상장주식수 포함)
+            basic_info = self._get_stock_basic_info_tr(stock_code)
+            if basic_info:
+                detailed_info.update(basic_info)
+                self.logger.debug(f"{stock_code} TR 정보 수집 성공")
+            
+            # 2. Master API로 보완 정보 수집
+            master_info = self._get_master_stock_info(stock_code)
+            if master_info:
+                # TR 정보 우선, Master 정보로 보완
+                for key, value in master_info.items():
+                    if key not in detailed_info or detailed_info[key] == 0:
+                        detailed_info[key] = value
+            
+            # 3. 시가총액 계산
+            current_price = detailed_info.get('current_price', 0)
+            listed_shares = detailed_info.get('listed_shares', 0)
+            
+            if current_price > 0 and listed_shares > 0:
+                market_cap = current_price * listed_shares
+                detailed_info['market_cap'] = market_cap
+                
+                # 시가총액 등급 계산
+                if market_cap >= 10_000_000_000_000:  # 10조 이상
+                    detailed_info['market_cap_grade'] = '대형주'
+                elif market_cap >= 1_000_000_000_000:  # 1조 이상
+                    detailed_info['market_cap_grade'] = '중형주'
+                else:
+                    detailed_info['market_cap_grade'] = '소형주'
+                
+                self.logger.info(f"✅ {stock_code} 시가총액: {self._format_market_cap(market_cap)} ({detailed_info['market_cap_grade']})")
+            else:
+                detailed_info['market_cap'] = 0
+                detailed_info['market_cap_grade'] = '정보없음'
+                self.logger.warning(f"⚠️ {stock_code} 시가총액 계산 불가 - 현재가: {current_price:,}원, 상장주식수: {listed_shares:,}주")
+            
+            return detailed_info
+            
+        except Exception as e:
+            self.logger.error(f"❌ 종목 {stock_code} 상세 정보 수집 실패: {e}")
+            import traceback
+            self.logger.debug(traceback.format_exc())
+            return {}
+
+    def _get_stock_basic_info_tr(self, stock_code: str) -> Dict[str, Any]:
+        """opt10001 TR로 주식 기본 정보 조회 (상장주식수 포함)"""
+        try:
+            self.logger.debug(f"🔍 opt10001 TR 요청: {stock_code}")
+            
+            # TR 데이터 초기화
+            self.tr_data = None
+            
+            # opt10001: 주식기본정보요청
+            self.ocx.SetInputValue("종목코드", stock_code)
+            
+            # 동적 화면번호 생성
+            import random
+            screen_no = str(8000 + random.randint(1, 999))
+            
+            # TR 요청
+            ret = self.ocx.CommRqData("opt10001_req", "opt10001", 0, screen_no)
+            
+            if ret != 0:
+                self.logger.warning(f"⚠️ opt10001 요청 실패: {ret}")
+                return {}
+            
+            # 응답 대기
+            timeout = 0
+            max_wait = 10
+            
+            while timeout < max_wait:
+                if hasattr(self, 'app') and self.app:
+                    self.app.processEvents()
+                
+                # TR 데이터가 수신되었는지 확인
+                if hasattr(self, 'tr_data') and self.tr_data:
+                    break
+                    
+                time.sleep(0.2)
+                timeout += 0.2
+            
+            if not hasattr(self, 'tr_data') or not self.tr_data:
+                self.logger.warning(f"⚠️ opt10001 응답 타임아웃: {stock_code}")
+                return {}
+            
+            # 데이터 파싱
+            basic_info = {}
+            
+            # 현재가
+            current_price = self._clean_number(self.tr_data.get('현재가', '0'))
+            if current_price > 0:
+                basic_info['current_price'] = current_price
+            
+            # 상장주식수 (단위: 천주 → 주로 변환)
+            listed_shares_k = self._clean_number(self.tr_data.get('상장주식', '0'))
+            if listed_shares_k > 0:
+                basic_info['listed_shares'] = listed_shares_k * 1000  # 천주 → 주
+                self.logger.debug(f"✅ {stock_code} 상장주식수: {basic_info['listed_shares']:,}주")
+            
+            # 시가총액 (단위: 억원 → 원으로 변환)
+            market_cap_100m = self._clean_number(self.tr_data.get('시가총액', '0'))
+            if market_cap_100m > 0:
+                basic_info['market_cap_from_tr'] = market_cap_100m * 100_000_000  # 억원 → 원
+            
+            # 기타 유용한 정보들
+            basic_info['volume'] = self._clean_number(self.tr_data.get('거래량', '0'))
+            basic_info['per'] = self._parse_float(self.tr_data.get('PER', '0'))
+            basic_info['pbr'] = self._parse_float(self.tr_data.get('PBR', '0'))
+            basic_info['eps'] = self._clean_number(self.tr_data.get('EPS', '0'))
+            basic_info['bps'] = self._clean_number(self.tr_data.get('BPS', '0'))
+            basic_info['roe'] = self._parse_float(self.tr_data.get('ROE', '0'))
+            
+            # 가격 정보
+            basic_info['open_price'] = self._clean_number(self.tr_data.get('시가', '0'))
+            basic_info['high_price'] = self._clean_number(self.tr_data.get('고가', '0'))
+            basic_info['low_price'] = self._clean_number(self.tr_data.get('저가', '0'))
+            basic_info['prev_close'] = self._clean_number(self.tr_data.get('기준가', '0'))
+            
+            # 등락률 계산
+            change_rate = self._parse_float(self.tr_data.get('등락율', '0'))
+            basic_info['change_rate'] = change_rate
+            
+            self.logger.debug(f"✅ opt10001 파싱 완료: {len(basic_info)}개 필드")
+            return basic_info
+            
+        except Exception as e:
+            self.logger.warning(f"⚠️ opt10001 TR 처리 실패: {e}")
+            return {}
+
+    def _get_master_stock_info(self, stock_code: str) -> Dict[str, Any]:
+        """Master API로 보완 정보 수집"""
+        master_info = {}
+        
+        try:
+            # 현재가 (TR에서 실패한 경우의 fallback)
+            if not master_info.get('current_price'):
+                current_price = self.ocx.GetMasterLastPrice(stock_code)
+                if current_price:
+                    master_info['current_price'] = self._clean_number(current_price)
+            
+            # 시장 구분
+            try:
+                market_gubun = self.ocx.GetMasterStockState(stock_code)
+                if market_gubun and market_gubun.strip():
+                    market_code = market_gubun.strip()
+                    if market_code.startswith('0') or market_code == '':
+                        master_info['market_type'] = 'KOSPI'
+                    else:
+                        master_info['market_type'] = 'KOSDAQ'
+                else:
+                    # 코드 범위로 추정
+                    if stock_code.startswith(('00', '01', '02', '03', '04', '05')):
+                        master_info['market_type'] = 'KOSPI'
+                    else:
+                        master_info['market_type'] = 'KOSDAQ'
+            except Exception:
+                master_info['market_type'] = 'UNKNOWN'
+            
+            # 거래량 (TR에서 실패한 경우의 fallback)
+            if not master_info.get('volume'):
+                try:
+                    volume = self.ocx.GetMasterVolume(stock_code)
+                    if volume:
+                        master_info['volume'] = self._clean_number(volume)
+                except Exception:
+                    pass
+            
+            return master_info
+            
+        except Exception as e:
+            self.logger.debug(f"Master 정보 수집 오류: {e}")
+            return {}
+
+    def _handle_realtime_stock_data(self, trcode: str, record_name: str):
+        """Handle real-time stock data from opt10001"""
+        try:
+            # opt10001 응답 처리
+            if trcode == "opt10001":
+                self.tr_data = {}
+                
+                # 모든 필드 추출 (키움 API 필드명 사용)
+                fields = [
+                    '종목코드', '종목명', '현재가', '거래량', '거래대금',
+                    '시가', '고가', '저가', '기준가', '전일대비', '등락율',
+                    '상장주식', '시가총액', 'PER', 'PBR', 'EPS', 'BPS', 'ROE',
+                    '액면가', '자본금', '신용비율', '연중최고', '연중최저'
+                ]
+                
+                for field in fields:
+                    try:
+                        value = self.ocx.GetCommData(trcode, record_name, 0, field).strip()
+                        if value:
+                            self.tr_data[field] = value
+                    except Exception:
+                        continue
+                
+                self.logger.debug(f"📡 opt10001 데이터 수신: {len(self.tr_data)}개 필드")
+                
+        except Exception as e:
+            self.logger.error(f"❌ opt10001 데이터 처리 오류: {e}")
+            self.tr_data = {}
+
+    def _parse_float(self, value: str) -> float:
+        """문자열을 float로 변환"""
+        try:
+            if not value or value.strip() == "":
+                return 0.0
+            
+            cleaned = value.strip()
+            if cleaned.startswith(('+', '-')):
+                cleaned = cleaned[1:] if cleaned.startswith('+') else cleaned
+            
+            cleaned = cleaned.replace(',', '').replace(' ', '')
+            
+            if cleaned == "" or cleaned == "0":
+                return 0.0
+                
+            return float(cleaned)
+            
+        except (ValueError, TypeError):
+            return 0.0
+    
+    def _get_market_status(self) -> str:
+        """Check if market is open or closed using KST timezone"""
+        try:
+            import pytz
+            from datetime import datetime, time
+            
+            # Get current time in KST (Korea Standard Time)
+            kst = pytz.timezone('Asia/Seoul')
+            now_kst = datetime.now(kst)
+            current_time = now_kst.time()
+            weekday = now_kst.weekday()  # 0=Monday, 6=Sunday
+            
+            self.logger.debug(f"Current KST time: {now_kst.strftime('%Y-%m-%d %H:%M:%S %Z')}")
+            
+            # Weekend check
+            if weekday >= 5:  # Saturday=5, Sunday=6
+                return "주말 휴장"
+            
+            # Trading hours: 9:00 AM - 3:30 PM (KST)
+            market_open = time(9, 0)
+            market_close = time(15, 30)
+            
+            if market_open <= current_time <= market_close:
+                return "정규장 거래중"
+            elif current_time < market_open:
+                return "장 시작 전"
+            else:
+                return "장 마감"
+                
+        except ImportError:
+            # Fallback without pytz if not available
+            self.logger.warning("⚠️ pytz not available, using system time (may not be accurate for KST)")
+            from datetime import datetime, time
+            
+            now = datetime.now()
+            current_time = now.time()
+            weekday = now.weekday()
+            
+            if weekday >= 5:
+                return "주말 휴장"
+            
+            market_open = time(9, 0)
+            market_close = time(15, 30)
+            
+            if market_open <= current_time <= market_close:
+                return "정규장 거래중"
+            elif current_time < market_open:
+                return "장 시작 전"
+            else:
+                return "장 마감"
+                
+        except Exception as e:
+            self.logger.error(f"❌ Market status check failed: {e}")
+            return "상태 확인 불가"
+    
+    def _get_realtime_stock_info(self, stock_code: str) -> Dict[str, Any]:
+        """Get stock information using multiple fallback methods"""
+        try:
+            # Skip complex TR requests and go directly to reliable Master API
+            self.logger.info(f"🔍 Getting stock info for {stock_code}")
+            
+            # Method 1: Try Master API directly (most reliable)
+            closing_info = self._get_closing_price(stock_code)
+            
+            if closing_info and closing_info.get('current_price', 0) > 0:
+                self.logger.info(f"✅ Price data success for {stock_code}: {closing_info.get('current_price', 0):,}원")
+                return closing_info
+            
+            # Method 2: Direct Master API call as final fallback
+            try:
+                self.logger.info(f"🔄 Direct Master API for {stock_code}")
+                last_price = self.ocx.GetMasterLastPrice(stock_code)
+                
+                if last_price:
+                    last_price = self._clean_number(last_price)
+                    if last_price > 0:
+                        market_status = self._get_market_status()
+                        
+                        basic_info = {
+                            'current_price': last_price,
+                            'volume': 0,  # No volume data available
+                            'change_rate': 0,  # Cannot calculate without prev data
+                            'data_source': 'master_direct',
+                            'market_status': market_status,
+                            'is_closing_price': market_status in ['장 마감', '주말 휴장', '장 시작 전'],
+                            'price_type': '종가' if market_status == '장 마감' else '전일종가' if market_status in ['주말 휴장', '장 시작 전'] else '현재가',
+                            'update_time': datetime.now().strftime('%Y-%m-%d %H:%M:%S')
+                        }
+                        
+                        self.logger.info(f"✅ Direct Master API success for {stock_code}: {last_price:,}원")
+                        return basic_info
+                        
+            except Exception as direct_error:
+                self.logger.debug(f"Direct Master API failed: {direct_error}")
+            
+            # If all methods fail, return None
+            self.logger.warning(f"⚠️ All price retrieval methods failed for {stock_code}")
+            return None
+                
+        except Exception as e:
+            self.logger.error(f"❌ Complete failure for {stock_code}: {e}")
+            return None
+    
+    def _get_closing_price(self, stock_code: str) -> Dict[str, Any]:
+        """Get latest closing price using simplified direct approach"""
+        try:
+            market_status = self._get_market_status()
+            self.logger.info(f"📊 Getting closing price for {stock_code}, market status: {market_status}")
+            
+            closing_info = {}
+            
+            # Method 1: Try Master API first (faster and more reliable)
+            try:
+                self.logger.info(f"🔍 Trying Master API for {stock_code}")
+                last_price = self.ocx.GetMasterLastPrice(stock_code)
+                
+                if last_price:
+                    last_price = self._clean_number(last_price)
+                    if last_price > 0:
+                        closing_info['current_price'] = last_price
+                        
+                        # Try to get volume data
+                        try:
+                            # Method 1: 마스터 API로 거래량 시도
+                            volume = self.ocx.GetMasterVolume(stock_code)
+                            if volume:
+                                detailed_info['volume'] = self._clean_number(volume)
+                            else:
+                                # Method 2: 실시간 데이터로 거래량 시도
+                                try:
+                                    # 실시간 거래량 조회 (FID 13)
+                                    real_volume = self.ocx.GetCommRealData(stock_code, 13)
+                                    if real_volume:
+                                        detailed_info['volume'] = self._clean_number(real_volume)
+                                    else:
+                                        detailed_info['volume'] = 0
+                                except:
+                                    detailed_info['volume'] = 0
+                        except Exception:
+                            detailed_info['volume'] = 0
+                        
+                        # Set price type based on market status
+                        if market_status == '장 마감':
+                            closing_info['is_closing_price'] = True
+                            closing_info['price_type'] = '종가'
+                        elif market_status == '주말 휴장':
+                            closing_info['is_closing_price'] = True
+                            closing_info['price_type'] = '전일종가'
+                        elif market_status == '장 시작 전':
+                            closing_info['is_closing_price'] = True
+                            closing_info['price_type'] = '전일종가'
+                        else:
+                            closing_info['is_closing_price'] = False
+                            closing_info['price_type'] = '현재가'
+                        
+                        closing_info['change_rate'] = 0  # Will be calculated later if needed
+                        closing_info['data_source'] = 'master_api'
+                        closing_info['update_time'] = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
+                        
+                        self.logger.info(f"✅ Master API success - {stock_code}: {last_price:,}원")
+                        return closing_info
+                
+            except Exception as master_error:
+                self.logger.warning(f"⚠️ Master API failed for {stock_code}: {master_error}")
+            
+            # Method 2: Try chart data as fallback
+            try:
+                self.logger.info(f"📈 Trying chart data for {stock_code}")
+                chart_data = self.get_stock_chart_data(stock_code, "D", 3)
+                
+                if not chart_data.empty and len(chart_data) >= 1:
+                    latest_data = chart_data.iloc[-1]
+                    today_close = int(latest_data['close'])
+                    
+                    if today_close > 0:
+                        closing_info['current_price'] = today_close
+                        closing_info['volume'] = int(latest_data['volume'])
+                        closing_info['high_price'] = int(latest_data['high'])
+                        closing_info['low_price'] = int(latest_data['low'])
+                        closing_info['open_price'] = int(latest_data['open'])
+                        
+                        # Calculate change if we have previous data
+                        if len(chart_data) >= 2:
+                            prev_close = int(chart_data.iloc[-2]['close'])
+                            if prev_close > 0:
+                                change_amount = today_close - prev_close
+                                change_rate = (change_amount / prev_close) * 100
+                                closing_info['prev_close'] = prev_close
+                                closing_info['change_amount'] = change_amount
+                                closing_info['change_rate'] = round(change_rate, 2)
+                        
+                        # Set price type
+                        if market_status == '장 마감':
+                            closing_info['is_closing_price'] = True
+                            closing_info['price_type'] = '종가'
+                        elif market_status == '주말 휴장':
+                            closing_info['is_closing_price'] = True
+                            closing_info['price_type'] = '전일종가'
+                        elif market_status == '장 시작 전':
+                            closing_info['is_closing_price'] = True
+                            closing_info['price_type'] = '전일종가'
+                        else:
+                            closing_info['is_closing_price'] = False
+                            closing_info['price_type'] = '현재가'
+                        
+                        closing_info['data_source'] = 'chart_data'
+                        closing_info['update_time'] = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
+                        
+                        self.logger.info(f"✅ Chart data success - {stock_code}: {today_close:,}원")
+                        return closing_info
+                        
+            except Exception as chart_error:
+                self.logger.warning(f"⚠️ Chart data failed for {stock_code}: {chart_error}")
+            
+            # If completely failed to get price data, return None
+            self.logger.error(f"❌ Complete failure to get price data for {stock_code}")
+            return None
+            
+        except Exception as e:
+            self.logger.error(f"❌ Closing price retrieval completely failed for {stock_code}: {e}")
+            return None
+    
+    def _format_market_cap(self, market_cap: int) -> str:
+        """Format market cap for display"""
+        if not market_cap or market_cap == 0:
+            return "N/A"
+        
+        try:
+            if market_cap >= 1000000000000:  # 조 단위
+                return f"{market_cap/1000000000000:.1f}조원"
+            elif market_cap >= 100000000:  # 억 단위
+                return f"{market_cap/100000000:.0f}억원"
+            elif market_cap >= 10000:  # 만 단위
+                return f"{market_cap/10000:.0f}만원"
+            else:
+                return f"{market_cap:,.0f}원"
+        except:
+            return "N/A"
     
     def _clean_number(self, value: str) -> int:
         """Clean and convert number string to integer"""
@@ -560,6 +1083,17 @@ class KiwoomAPI(QObject):
     def _on_receive_tr_data(self, screen_no, rqname, trcode, record_name, prev_next):
         """Handle TR data reception"""
         self.logger.debug(f"📡 TR 데이터 수신: {rqname}, 화면번호: {screen_no}")
+        
+        try:
+            if rqname == "opt10081_req":  # Daily chart data
+                self._handle_daily_chart_data(trcode, record_name)
+            elif rqname == "opt10080_req":  # Minute chart data
+                self._handle_minute_chart_data(trcode, record_name)
+            elif rqname == "opt10001_req":  # Real-time stock data
+                self._handle_realtime_stock_data(trcode, record_name)
+        except Exception as e:
+            self.logger.error(f"❌ TR data handling error: {e}")
+        
         if self.data_loop:
             self.data_loop.exit()
     
@@ -682,54 +1216,188 @@ class KiwoomAPI(QObject):
         except Exception as e:
             self.logger.error(f"❌ 조건식 새로고침 중 오류: {e}")
             return False
-
-# Test mode mock class for development
-class MockKiwoomAPI:
-    """Mock Kiwoom API for testing without actual connection"""
     
-    def __init__(self):
-        self.logger = logging.getLogger(__name__)
-        self.logger.info("🧪 Using Mock Kiwoom API (Test Mode)")
-        self.connected = True
-    
-    def connect(self) -> bool:
-        self.logger.info("🧪 Mock connection successful")
-        return True
-    
-    def disconnect(self):
-        self.logger.info("🧪 Mock disconnection")
-    
-    def load_condition_list(self) -> bool:
-        self.logger.info("🧪 Mock condition list loaded")
-        return True
-    
-    def get_condition_stocks(self, condition_name: str = None) -> List[str]:
-        # Return mock stock codes for testing
-        mock_stocks = ["005930", "000660", "035420", "005490", "051910", 
-                      "006400", "035720", "105560", "055550", "096770"]
-        self.logger.info(f"🧪 Mock condition '{condition_name}' returned {len(mock_stocks)} stocks")
-        return mock_stocks[:config.trading.max_stocks]
-    
-    def get_stock_info(self, stock_codes: List[str]) -> Dict[str, Dict]:
-        # Return mock stock information
-        mock_names = ["삼성전자", "SK하이닉스", "네이버", "포스코홀딩스", "LG화학",
-                     "삼성SDI", "카카오", "KB금융", "신한지주", "엔씨소프트"]
+    def get_stock_chart_data(self, stock_code: str, period: str = "D", count: int = 100) -> pd.DataFrame:
+        """
+        Get historical price data for technical analysis
         
-        stock_info = {}
-        for i, code in enumerate(stock_codes):
-            stock_info[code] = {
-                'name': mock_names[i] if i < len(mock_names) else f"테스트주식{i}",
-                'code': code,
-                'current_price': 50000 + (i * 5000),
-                'volume': 100000 + (i * 10000),
-                'timestamp': datetime.now().isoformat()
+        Args:
+            stock_code: Stock code (e.g., '005930')
+            period: Chart period ('D' for daily, 'm' for minute)
+            count: Number of data points to retrieve (max 600)
+            
+        Returns:
+            DataFrame with columns ['date', 'open', 'high', 'low', 'close', 'volume']
+        """
+        if not self.connected:
+            self.logger.error("❌ Not connected to Kiwoom API")
+            return pd.DataFrame()
+        
+        try:
+            self.logger.info(f"📊 Requesting {period} chart data for {stock_code} ({count} bars)")
+            
+            # Prepare request
+            self.chart_data = []  # Reset chart data
+            
+            if period.upper() == "D":
+                # Daily chart data (opt10081)
+                self.ocx.SetInputValue("종목코드", stock_code)
+                self.ocx.SetInputValue("기준일자", "")  # Today
+                self.ocx.SetInputValue("수정주가구분", "1")  # Adjusted price
+                
+                # Request data
+                ret = self.ocx.CommRqData("opt10081_req", "opt10081", 0, "0001")
+                
+            elif period.upper() == "M":
+                # Minute chart data (opt10080)
+                self.ocx.SetInputValue("종목코드", stock_code)
+                self.ocx.SetInputValue("틱범위", "1")  # 1-minute
+                self.ocx.SetInputValue("수정주가구분", "1")
+                
+                # Request data
+                ret = self.ocx.CommRqData("opt10080_req", "opt10080", 0, "0002")
+            else:
+                self.logger.error(f"❌ Unsupported period: {period}")
+                return pd.DataFrame()
+            
+            if ret != 0:
+                self.logger.error(f"❌ Chart data request failed: {ret}")
+                return pd.DataFrame()
+            
+            # Wait for data reception
+            self.data_loop = QEventLoop()
+            self.data_loop.exec_()
+            
+            # Convert to DataFrame
+            if hasattr(self, 'chart_data') and self.chart_data:
+                df = pd.DataFrame(self.chart_data)
+                df['date'] = pd.to_datetime(df['date'])
+                df = df.sort_values('date').reset_index(drop=True)
+                
+                self.logger.info(f"✅ Retrieved {len(df)} data points for {stock_code}")
+                return df.tail(count)  # Return latest 'count' rows
+            else:
+                self.logger.warning(f"⚠️ No chart data received for {stock_code}")
+                return pd.DataFrame()
+                
+        except Exception as e:
+            self.logger.error(f"❌ Error getting chart data for {stock_code}: {e}")
+            return pd.DataFrame()
+    
+    def _handle_daily_chart_data(self, trcode: str, record_name: str):
+        """Handle daily chart data from opt10081"""
+        try:
+            # Get number of data rows
+            data_count = self.ocx.GetRepeatCnt(trcode, record_name)
+            self.logger.debug(f"📊 Daily chart data count: {data_count}")
+            
+            chart_data = []
+            for i in range(data_count):
+                date_str = self.ocx.GetCommData(trcode, record_name, i, "일자").strip()
+                open_price = self._clean_number(self.ocx.GetCommData(trcode, record_name, i, "시가"))
+                high_price = self._clean_number(self.ocx.GetCommData(trcode, record_name, i, "고가"))
+                low_price = self._clean_number(self.ocx.GetCommData(trcode, record_name, i, "저가"))
+                close_price = self._clean_number(self.ocx.GetCommData(trcode, record_name, i, "현재가"))
+                volume = self._clean_number(self.ocx.GetCommData(trcode, record_name, i, "거래량"))
+                
+                # Format date
+                if len(date_str) == 8:  # YYYYMMDD
+                    formatted_date = f"{date_str[:4]}-{date_str[4:6]}-{date_str[6:8]}"
+                else:
+                    formatted_date = date_str
+                
+                chart_data.append({
+                    'date': formatted_date,
+                    'open': abs(open_price),  # Remove negative signs
+                    'high': abs(high_price),
+                    'low': abs(low_price),
+                    'close': abs(close_price),
+                    'volume': abs(volume)
+                })
+            
+            self.chart_data = chart_data
+            self.logger.debug(f"✅ Parsed {len(chart_data)} daily chart records")
+            
+        except Exception as e:
+            self.logger.error(f"❌ Error handling daily chart data: {e}")
+            self.chart_data = []
+    
+    def _handle_minute_chart_data(self, trcode: str, record_name: str):
+        """Handle minute chart data from opt10080"""
+        try:
+            # Get number of data rows
+            data_count = self.ocx.GetRepeatCnt(trcode, record_name)
+            self.logger.debug(f"📊 Minute chart data count: {data_count}")
+            
+            chart_data = []
+            for i in range(data_count):
+                time_str = self.ocx.GetCommData(trcode, record_name, i, "체결시간").strip()
+                open_price = self._clean_number(self.ocx.GetCommData(trcode, record_name, i, "시가"))
+                high_price = self._clean_number(self.ocx.GetCommData(trcode, record_name, i, "고가"))
+                low_price = self._clean_number(self.ocx.GetCommData(trcode, record_name, i, "저가"))
+                close_price = self._clean_number(self.ocx.GetCommData(trcode, record_name, i, "현재가"))
+                volume = self._clean_number(self.ocx.GetCommData(trcode, record_name, i, "거래량"))
+                
+                # Format datetime for minute data
+                if len(time_str) >= 8:  # YYYYMMDDHHMM or similar
+                    if len(time_str) == 8:  # HHMM format
+                        # Use today's date with the time
+                        today = datetime.now().strftime("%Y-%m-%d")
+                        formatted_date = f"{today} {time_str[:2]}:{time_str[2:4]}:00"
+                    else:  # Full datetime
+                        formatted_date = f"{time_str[:4]}-{time_str[4:6]}-{time_str[6:8]} {time_str[8:10]}:{time_str[10:12]}:00"
+                else:
+                    formatted_date = time_str
+                
+                chart_data.append({
+                    'date': formatted_date,
+                    'open': abs(open_price),
+                    'high': abs(high_price),
+                    'low': abs(low_price),
+                    'close': abs(close_price),
+                    'volume': abs(volume)
+                })
+            
+            self.chart_data = chart_data
+            self.logger.debug(f"✅ Parsed {len(chart_data)} minute chart records")
+            
+        except Exception as e:
+            self.logger.error(f"❌ Error handling minute chart data: {e}")
+            self.chart_data = []
+    
+    def _handle_realtime_stock_data(self, trcode: str, record_name: str):
+        """Handle real-time stock data from opt10001"""
+        try:
+            # Extract real-time stock information
+            current_price = self._clean_number(self.ocx.GetCommData(trcode, record_name, 0, "현재가"))
+            volume = self._clean_number(self.ocx.GetCommData(trcode, record_name, 0, "거래량"))
+            change_rate = self._clean_number(self.ocx.GetCommData(trcode, record_name, 0, "등락률"))
+            change_amount = self._clean_number(self.ocx.GetCommData(trcode, record_name, 0, "전일대비"))
+            high_price = self._clean_number(self.ocx.GetCommData(trcode, record_name, 0, "고가"))
+            low_price = self._clean_number(self.ocx.GetCommData(trcode, record_name, 0, "저가"))
+            open_price = self._clean_number(self.ocx.GetCommData(trcode, record_name, 0, "시가"))
+            prev_close = self._clean_number(self.ocx.GetCommData(trcode, record_name, 0, "기준가"))
+            
+            # Calculate proper change rate if needed
+            if current_price > 0 and prev_close > 0 and change_rate == 0:
+                change_rate = ((current_price - prev_close) / prev_close) * 100
+            
+            # Store the data
+            self.current_stock_data = {
+                'current_price': abs(current_price) if current_price != 0 else 0,
+                'volume': abs(volume) if volume != 0 else 0,
+                'change_rate': change_rate / 100 if abs(change_rate) > 100 else change_rate,  # Convert percentage
+                'change_amount': change_amount,
+                'high_price': abs(high_price) if high_price != 0 else 0,
+                'low_price': abs(low_price) if low_price != 0 else 0,
+                'open_price': abs(open_price) if open_price != 0 else 0,
+                'prev_close': abs(prev_close) if prev_close != 0 else 0,
+                'update_time': datetime.now().strftime('%Y-%m-%d %H:%M:%S')
             }
-        
-        self.logger.info(f"🧪 Mock stock info for {len(stock_codes)} stocks")
-        return stock_info
-    
-    def is_connected(self) -> bool:
-        return True
-    
-    def get_account_list(self) -> List[str]:
-        return ["8888888-88"]
+            
+            self.logger.debug(f"✅ Real-time stock data extracted: {self.current_stock_data}")
+            
+        except Exception as e:
+            self.logger.error(f"❌ Error handling real-time stock data: {e}")
+            self.current_stock_data = {}
+

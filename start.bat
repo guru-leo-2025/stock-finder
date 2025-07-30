@@ -196,8 +196,9 @@ if not exist ".env" (
     echo SLACK_BOT_TOKEN=xoxb-your_slack_bot_token >> .env
     echo SLACK_CHANNEL=#trading-alerts >> .env
     echo. >> .env
-    echo # KRX Market Data Configuration >> .env
-    echo KRX_API_KEY=your_krx_api_key >> .env
+    REM KRX API configuration removed
+    echo # DART Financial Data Configuration >> .env
+    echo DART_API_KEY=your_dart_api_key >> .env
     echo. >> .env
     echo # Trading Configuration >> .env
     echo SCREENING_CONDITION_NAME=10stars >> .env
@@ -270,18 +271,13 @@ if %ERRORLEVEL% neq 0 (
     exit /b 1
 )
 
-echo Testing KRX API module...
-python -c "from krx_api import KRXMarketDataAPI; print('✅ KRX API module: OK')" 2>nul
-if %ERRORLEVEL% neq 0 (
-    echo ❌ KRX API module test failed
-    pause
-    exit /b 1
-)
+REM KRX API module removed - no longer required
+echo ✅ KRX API module: REMOVED (no longer required)
 
-echo Testing AI Analyzer module...
-python -c "from ai_analyzer import AIStockAnalyzer; print('✅ AI Analyzer module: OK')" 2>nul
+echo Testing Technical Analyzer module...
+python -c "from technical_analyzer import TechnicalAnalyzer; print('✅ Technical Analyzer module: OK')" 2>nul
 if %ERRORLEVEL% neq 0 (
-    echo ❌ AI Analyzer module test failed
+    echo ❌ Technical Analyzer module test failed
     pause
     exit /b 1
 )
