@@ -1,56 +1,56 @@
 # 🚀 AI-Powered Korean Stock Trading System
 
-AI 기반 한국 주식 자동매매 시스템으로 키움증권 API와 OpenAI를 활용한 지능형 트레이딩 플랫폼입니다.
+An intelligent trading platform that combines Kiwoom Securities API with OpenAI for automated Korean stock market analysis and trading.
 
-## ✨ 주요 기능
+## ✨ Key Features
 
-- 🤖 **AI 기반 주식 분석**: OpenAI GPT-4를 활용한 지능형 기술적 분석
-- 📊 **실시간 데이터 처리**: 키움증권 OpenAPI를 통한 실시간 주가 및 거래 데이터
-- 🔍 **종목 스크리닝**: 사용자 정의 조건으로 투자 대상 종목 자동 선별
-- 📱 **Slack 알림**: 거래 신호 및 분석 결과 실시간 알림
-- 📈 **기술적 분석**: RSI, MACD, 볼린저 밴드 등 다양한 기술적 지표 분석
+- 🤖 **AI-Enhanced Stock Analysis**: Intelligent technical analysis powered by OpenAI GPT models
+- 📊 **Real-time Data Processing**: Live stock prices and trading data via Kiwoom OpenAPI
+- 🔍 **Stock Screening**: Automated stock selection based on custom conditions
+- 📱 **Slack Integration**: Real-time trading signals and analysis notifications
+- 📈 **Technical Analysis**: Comprehensive analysis with RSI, MACD, Bollinger Bands, and more
 
-## 🏗️ 시스템 구조
+## 🏗️ System Architecture
 
 ```
 kiwoom/
-├── main.py                 # 메인 애플리케이션
-├── kiwoom_api.py           # 키움증권 API 인터페이스
-├── ai_analyzer.py          # AI 기반 주식 분석 엔진
-├── technical_analyzer.py   # 기술적 분석 모듈
-├── slack_notifier.py       # Slack 알림 시스템
-├── config.py              # 설정 관리
-├── requirements.txt       # 의존성 패키지
-├── start.bat             # Windows 실행 스크립트
-├── data/                 # 분석 데이터 저장소
-└── logs/                 # 로그 파일 저장소
+├── main.py                      # Main application orchestrator
+├── kiwoom_api.py               # Kiwoom Securities API interface
+├── ai_analyzer.py              # AI-powered stock analysis engine
+├── technical_analyzer.py       # Technical analysis module
+├── slack_notifier.py           # Slack notification system
+├── config.py                   # Configuration management
+├── requirements.txt            # Package dependencies
+├── start.bat                   # Windows execution script
+├── data/                       # Analysis data storage
+└── logs/                       # Log files storage
 ```
 
-## 🔧 설치 및 설정
+## 🔧 Installation & Setup
 
-### 1. 시스템 요구사항
-- Windows 10/11 (키움증권 OpenAPI 지원)
+### 1. System Requirements
+- Windows 10/11 (Required for Kiwoom OpenAPI)
 - Python 3.10+
-- 키움증권 계좌 및 OpenAPI 신청
+- Kiwoom Securities account with OpenAPI access
 
-### 2. 환경 설정
+### 2. Environment Setup
 
 ```bash
-# 저장소 클론
+# Clone repository
 git clone https://github.com/guru-leo-2025/stock-finder.git
 cd stock-finder
 
-# 가상환경 생성 및 활성화
+# Create and activate virtual environment
 python -m venv venv
 venv\Scripts\activate
 
-# 의존성 설치
+# Install dependencies
 pip install -r requirements.txt
 ```
 
-### 3. 환경변수 설정
+### 3. Environment Configuration
 
-`.env` 파일을 생성하고 다음 정보를 입력하세요:
+Create a `.env` file with the following configuration:
 
 ```env
 # Kiwoom API
@@ -69,73 +69,87 @@ SLACK_BOT_TOKEN=your_slack_bot_token
 SLACK_CHANNEL=your_channel_name
 ```
 
-## 🚀 사용법
+## 🚀 Usage
 
-### Windows에서 실행
+### Running on Windows
 ```bash
-# 배치 파일로 실행
+# Run with batch file
 start.bat
 
-# 또는 Python으로 직접 실행
+# Or run directly with Python
 python main.py
 ```
 
-### 주요 모듈 사용 예시
+### Module Usage Example
 
 ```python
 from kiwoom_api import KiwoomAPI
 from ai_analyzer import AIStockAnalyzer
 from technical_analyzer import TechnicalAnalyzer
 
-# 키움 API 초기화
+# Initialize Kiwoom API
 kiwoom = KiwoomAPI()
 
-# AI 분석기 초기화
+# Initialize AI analyzer
 ai_analyzer = AIStockAnalyzer()
 
-# 기술적 분석기 초기화
+# Initialize technical analyzer
 tech_analyzer = TechnicalAnalyzer()
 
-# 종목 분석 실행
-analysis_result = await ai_analyzer.analyze_stock("005930")  # 삼성전자
+# Run stock analysis
+analysis_result = await ai_analyzer.analyze_stock("005930")  # Samsung Electronics
 ```
 
-## 📊 기능 상세
+## 📊 Feature Details
 
-### AI 분석 엔진
-- **다중 지표 분석**: RSI, MACD, 볼린저 밴드, 이동평균선 등
-- **AI 모델 선택**: 기본값 `gpt-4o-mini-2024-07-18` (비용 효율적)
-- **패턴 인식**: 차트 패턴 및 기술적 신호 자동 감지
-- **위험도 평가**: AI 기반 리스크 스코어링
+### AI Analysis Engine
+- **Multi-Indicator Analysis**: RSI, MACD, Bollinger Bands, Moving Averages, etc.
+- **AI Model Selection**: Default `gpt-4o-mini-2024-07-18` (cost-efficient)
+- **Pattern Recognition**: Automated chart pattern and technical signal detection
+- **Risk Assessment**: AI-based risk scoring and evaluation
 
-#### 📝 지원 OpenAI 모델
-- `gpt-4o-mini-2024-07-18` (기본값, 비용 효율적)
-- `gpt-4o` (고성능, 높은 비용)
-- `gpt-4-turbo` (균형잡힌 성능)
-- `gpt-4` (표준 GPT-4 모델)
+#### 📝 Supported OpenAI Models
+- `gpt-4o-mini-2024-07-18` (Default, cost-efficient)
+- `gpt-4o` (High performance, higher cost)
+- `gpt-4-turbo` (Balanced performance)
+- `gpt-4` (Standard GPT-4 model)
 
-환경변수 `OPENAI_MODEL`로 변경 가능합니다.
+You can change the model using the `OPENAI_MODEL` environment variable.
 
-### 실시간 모니터링
-- 실시간 주가 변동 추적
-- 거래량 급증 종목 감지
-- 사용자 정의 조건 알림
-- 포트폴리오 성과 추적
+### Real-time Monitoring
+- Live stock price tracking
+- Volume surge detection
+- Custom condition alerts
+- Portfolio performance tracking
 
-### Slack 통합
-- 실시간 거래 신호 알림
-- 일일/주간 성과 리포트
-- 시장 오픈/마감 알림
-- 긴급 상황 알림
+### Slack Integration
+- Real-time trading signal notifications
+- Daily/weekly performance reports
+- Market open/close alerts
+- Emergency situation alerts
 
-## 📈 분석 결과 예시
+## 🔄 Analysis Workflow
 
-시스템은 다음과 같은 형태의 분석 결과를 제공합니다:
+```
+Stock Data Collection (Kiwoom API)
+    ↓
+Technical Analysis (RSI, MACD, etc.)
+    ↓
+AI Enhancement (OpenAI GPT Analysis)
+    ↓
+Combined Recommendation
+    ↓
+Slack Notification (Comprehensive Report)
+```
+
+## 📈 Analysis Output Example
+
+The system provides analysis results in the following format:
 
 ```json
 {
   "stock_code": "005930",
-  "stock_name": "삼성전자",
+  "stock_name": "Samsung Electronics",
   "analysis_time": "2025-01-30 14:30:00",
   "technical_indicators": {
     "rsi": 65.4,
@@ -155,28 +169,40 @@ analysis_result = await ai_analyzer.analyze_stock("005930")  # 삼성전자
 }
 ```
 
-## ⚠️ 주의사항
+## ⚠️ Important Disclaimers
 
-- 본 시스템은 투자 참고용이며, 실제 투자 결정은 사용자 책임입니다
-- 키움증권 OpenAPI 사용 약관을 준수하세요
-- 충분한 백테스팅 후 실제 거래에 적용하세요
-- API 사용량 제한을 확인하고 관리하세요
+- This system is for reference purposes only. Investment decisions are user's responsibility
+- Comply with Kiwoom Securities OpenAPI terms of service
+- Perform thorough backtesting before live trading
+- Monitor API usage limits and manage accordingly
 
-## 🔒 보안
+## 🔒 Security
 
-- API 키와 민감한 정보는 환경변수로 관리
-- 로그 파일에서 개인정보 제외
-- HTTPS 통신 사용
-- 정기적인 의존성 업데이트 권장
+- API keys and sensitive information managed via environment variables
+- Personal information excluded from log files
+- HTTPS communication used
+- Regular dependency updates recommended
 
-## 📞 지원 및 문의
+## 🛠️ Development
+
+### Running Integration Test
+```bash
+python integrated_analysis_example.py
+```
+
+### Configuration Validation
+```bash
+python config.py
+```
+
+## 📞 Support & Contact
 
 - **Issues**: [GitHub Issues](https://github.com/guru-leo-2025/stock-finder/issues)
-- **개발자**: guru.leo.2025@gmail.com
+- **Developer**: guru.leo.2025@gmail.com
 
-## 📄 라이선스
+## 📄 License
 
-이 프로젝트는 MIT 라이선스 하에 제공됩니다.
+This project is provided under the MIT license.
 
 ---
 **⚡ Happy Trading with AI! ⚡**
